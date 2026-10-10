@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/pingwinekZ/zzz_packet_capture_0delay",
+  "tag": "3.2.1",
+  "commit": "4853f07c8fb5322c12b9b580d6364b577c2ac96a",
+  "archiveUrl": "https://codeload.github.com/pingwinekZ/zzz_packet_capture_0delay/zip/4853f07c8fb5322c12b9b580d6364b577c2ac96a",
+  "archiveSha256": "39eb5b5c3d2ac9e5f207280902112ff0de08b38966fdd49b25d7bcb92f8eb640",
+  "codeLicense": "MIT",
+  "scope": "Fixed build input; code MIT; protocol data redistribution requires separate rights review",
+  "runtimeNetworkUpdates": false
+}

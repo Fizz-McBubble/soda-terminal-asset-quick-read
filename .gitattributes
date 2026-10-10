@@ -1,0 +1,3 @@
+* text eol=lf
+installer/Rust-DEPENDENCY-NOTICES.txt -text
+installer/Rust-STDLIB-COPYRIGHT.html -text

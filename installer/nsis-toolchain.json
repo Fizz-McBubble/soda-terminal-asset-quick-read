@@ -1,0 +1,9 @@
+{
+  "version": "3.13",
+  "archiveUrl": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip",
+  "archiveSha256": "ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8",
+  "compilerSha256": "4ec390d0f96f9728507fbc2f4e91311dd90bfc6c8ddfe2159357b3651ae151c0",
+  "license": "https://nsis.sourceforge.io/Docs/AppendixI.html",
+  "source": "https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/nsis-3.13-src.tar.bz2/download",
+  "mode": "unchanged NSIS compression module; adapted launcher script"
+}

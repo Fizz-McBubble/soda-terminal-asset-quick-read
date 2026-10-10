@@ -1,0 +1,15 @@
+.upstream/
+target/
+runtime/
+downloads/
+outputs/
+jobs/
+.cache/
+**/bin/
+**/obj/
+build*/
+package*/
+*.exe
+*.dll
+*.sys
+*.zip

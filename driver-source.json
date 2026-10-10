@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/basil00/WinDivert",
+  "version": "2.2.2",
+  "archiveUrl": "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip",
+  "archiveSha256": "63cb41763bb4b20f600b6de04e991a9c2be73279e317d4d82f237b150c5f3f15",
+  "installedOrLoadedDuringPreparation": false,
+  "license": "LGPL-3.0 or GPL-2.0; see the official distribution license"
+}
