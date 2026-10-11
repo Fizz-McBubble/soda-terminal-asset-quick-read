@@ -39,7 +39,7 @@ internal static class Tests
                 { var entry = zip.CreateEntry(path); using var writer = new StreamWriter(entry.Open()); writer.Write("synthetic " + path); }
             var expanded = Path.Combine(root, "fixture"); ZipFile.ExtractToDirectory(archive, expanded);
             var files = Directory.GetFiles(expanded, "*", SearchOption.AllDirectories).Select(path => new CatalogFile(Path.GetRelativePath(expanded, path).Replace('\\', '/'), new FileInfo(path).Length, InstallEngine.Digest(path))).ToArray();
-            var catalog = new Catalog("1.0.1", InstallEngine.Digest(archive), files);
+            var catalog = new Catalog(InstallEngine.Version, InstallEngine.Digest(archive), files);
             var install = Path.Combine(root, "中文 带空格", "AssetQuickRead");
             Directory.CreateDirectory(Path.Combine(install, "jobs")); File.WriteAllText(Path.Combine(install, "jobs", "keep.json"), "previous job");
             Directory.CreateDirectory(Path.Combine(install, "versions", "0.9.0")); File.WriteAllText(Path.Combine(install, "versions", "0.9.0", "keep.txt"), "old version");
@@ -47,7 +47,7 @@ internal static class Tests
             var oldVersion = InstallEngine.Digest(Path.Combine(install, "versions", "0.9.0", "keep.txt"));
             var reg = new Registration(); var progresses = new List<int>();
             var target = InstallEngine.Install(archive, catalog, install, reg, CancellationToken.None, progresses.Add);
-            Check(target == Path.Combine(install, "versions", "1.0.1") && reg.Applied == 1, "versioned_install");
+            Check(target == Path.Combine(install, "versions", InstallEngine.Version) && reg.Applied == 1, "versioned_install");
             InstallEngine.Verify(target, catalog); passed++;
             Check(progresses.Last() == 100 && progresses.SequenceEqual(progresses.Order()), "real_progress");
             Check(InstallEngine.Digest(Path.Combine(install, "jobs", "keep.json")) == oldJob && InstallEngine.Digest(Path.Combine(install, "versions", "0.9.0", "keep.txt")) == oldVersion, "existing_jobs_versions_preserved");
@@ -55,17 +55,17 @@ internal static class Tests
             Refuses(() => InstallEngine.Install(archive, catalog with { ArchiveSha256 = new string('0', 64) }, Path.Combine(root, "bad-archive"), new Registration(), CancellationToken.None, _ => { }), "archive_hash_rejected");
             Refuses(() => InstallEngine.Install(archive, catalog with { Version = "9.9.9" }, Path.Combine(root, "bad-version"), new Registration(), CancellationToken.None, _ => { }), "version_rejected");
             foreach (var path in new[] { "../escape", "runtime/../escape", "/absolute", "C:/escape", "runtime\\evil", "runtime//evil", "runtime/./evil" }) Refuses(() => InstallEngine.Safe(root, path), "path_rejected");
-            var unknown = Path.Combine(root, "unknown", "versions", "1.0.1"); Directory.CreateDirectory(unknown); File.WriteAllText(Path.Combine(unknown, "keep.txt"), "foreign");
+            var unknown = Path.Combine(root, "unknown", "versions", InstallEngine.Version); Directory.CreateDirectory(unknown); File.WriteAllText(Path.Combine(unknown, "keep.txt"), "foreign");
             Refuses(() => InstallEngine.Install(archive, catalog, Path.Combine(root, "unknown"), new Registration(), CancellationToken.None, _ => { }), "unknown_same_version_rejected");
             Check(File.ReadAllText(Path.Combine(unknown, "keep.txt")) == "foreign", "foreign_same_version_preserved");
             var cancelledRoot = Path.Combine(root, "cancelled"); using var cancellation = new CancellationTokenSource();
             var cancelReg = new Registration();
             Refuses(() => InstallEngine.Install(archive, catalog, cancelledRoot, cancelReg, cancellation.Token, _ => cancellation.Cancel()), "mid_copy_cancel");
-            Check(!Directory.Exists(Path.Combine(cancelledRoot, "versions", "1.0.1")) && !Directory.EnumerateDirectories(Path.Combine(cancelledRoot, "versions")).Any(), "cancel_owned_rollback");
+            Check(!Directory.Exists(Path.Combine(cancelledRoot, "versions", InstallEngine.Version)) && !Directory.EnumerateDirectories(Path.Combine(cancelledRoot, "versions")).Any(), "cancel_owned_rollback");
             Check(cancelReg.Applied == 0, "cancel_no_protocol_write");
             var failureRoot = Path.Combine(root, "registration-failure"); var failingReg = new Registration(true);
             Refuses(() => InstallEngine.Install(archive, catalog, failureRoot, failingReg, CancellationToken.None, _ => { }), "registration_failure");
-            Check(failingReg.RolledBack == 1 && !Directory.Exists(Path.Combine(failureRoot, "versions", "1.0.1")), "registration_failure_rolls_back_new_version");
+            Check(failingReg.RolledBack == 1 && !Directory.Exists(Path.Combine(failureRoot, "versions", InstallEngine.Version)), "registration_failure_rolls_back_new_version");
             File.AppendAllText(Path.Combine(target, files[0].Path), "tampered");
             Refuses(() => InstallEngine.Verify(target, catalog), "installed_hash_rejected");
             var command = UserRegistration.Command(@"C:\中文 带空格\Soda.AssetQuickRead.Bridge.exe");
@@ -103,8 +103,8 @@ internal static class Tests
             rollbackStore.FailAfterReplace = true;
             var rollbackRegistration = new UserRegistration(rollbackStore, Path.Combine(rollbackRoot, "synthetic-start-menu", "tool.url"), rollbackDigest);
             Refuses(() => InstallEngine.Install(archive, catalog, rollbackRoot, rollbackRegistration, CancellationToken.None, _ => { }), "upgrade_failure_after_command_write");
-            Check(rollbackStore.Current!.Command == rollbackCommand && !Directory.Exists(Path.Combine(rollbackRoot, "versions", "1.0.1")), "upgrade_restores_old_command_and_rolls_back_new_version");
-            var newExecutable = Path.Combine(upgradeRoot, "versions", "1.0.1", "Soda.AssetQuickRead.Bridge.exe");
+            Check(rollbackStore.Current!.Command == rollbackCommand && !Directory.Exists(Path.Combine(rollbackRoot, "versions", InstallEngine.Version)), "upgrade_restores_old_command_and_rolls_back_new_version");
+            var newExecutable = Path.Combine(upgradeRoot, "versions", InstallEngine.Version, "Soda.AssetQuickRead.Bridge.exe");
             foreach (var rejected in new[] {
                 new ProtocolRegistration(UserRegistration.Description, "", UserRegistration.Command(Path.Combine(root, "different-root", "versions", "1.0.0", "Soda.AssetQuickRead.Bridge.exe")), true),
                 new ProtocolRegistration(UserRegistration.Description, "", oldCommand + " --serve", true),
@@ -143,7 +143,7 @@ internal static class Tests
                 Refuses(() => ProtocolDownload.Url(new CatalogFile("runtime/assets/evil.json", 1, "wrong", true)), "arbitrary_download_rejected");
                 var rejectedRoot = Path.Combine(root, "download-failure"); var rejectedRegistration = new Registration();
                 Refuses(() => InstallEngine.Install(realArchive, realCatalog, rejectedRoot, rejectedRegistration, CancellationToken.None, _ => { }, (_, _) => throw new IOException("synthetic_download_failure")), "download_failure");
-                Check(rejectedRegistration.Applied == 0 && !Directory.Exists(Path.Combine(rejectedRoot, "versions", "1.0.1")), "download_failure_no_registration_no_install");
+                Check(rejectedRegistration.Applied == 0 && !Directory.Exists(Path.Combine(rejectedRoot, "versions", InstallEngine.Version)), "download_failure_no_registration_no_install");
                 passed += InstallerExperienceTests.RunFullPackage(Path.Combine(root, "full-uninstall"), realArchive, realCatalog, privatePayload);
             }
             passed += InstallerExperienceTests.Run(root, archive, catalog);

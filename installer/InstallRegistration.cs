@@ -78,14 +78,17 @@ internal sealed class InstallRegistration : IRegistration
         var path = InstallEngine.Safe(root, "uninstall.exe");
         previous = store.Read();
         applied = Record(root);
-        var upgrading101 = previous is { OwnedShape: true, Version: "1.0.1" } && previous == applied with { Version = "1.0.1" };
-        if (previous is not null && previous != applied && !upgrading101) throw new IOException("uninstall_registration_conflict");
+        var upgrading = previous is { OwnedShape: true, Version: "1.0.1" or "1.0.2" } && previous == applied with { Version = previous.Version };
+        if (previous is not null && previous != applied && !upgrading) throw new IOException("uninstall_registration_conflict");
         using var source = stub(); using var bytes = new MemoryStream(); source.CopyTo(bytes);
         stubHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes.ToArray()));
         if (File.Exists(path) && InstallEngine.Digest(path) != stubHash)
         {
             // Identity of the uninstaller shipped in the actual 1.0.1 release.
-            if (!upgrading101 || InstallEngine.Digest(path) != "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B")
+            var oldStubHash = previous?.Version == "1.0.2"
+                ? "20A3C4D98F79FBC3604ECC8759D914D5968C8B0F5222BCF4E334B328162F371C"
+                : "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B";
+            if (!upgrading || InstallEngine.Digest(path) != oldStubHash)
                 throw new IOException("uninstaller_file_conflict");
             replacedStub = File.ReadAllBytes(path);
         }

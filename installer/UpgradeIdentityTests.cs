@@ -26,7 +26,7 @@ internal static class UpgradeIdentityTests
         void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks.Add(name); }
         try
         {
-            Check(InstallEngine.Version == "1.0.2" && InstallEngine.ReadCatalog().Version == "1.0.2", "installer_catalog_identity");
+            Check(InstallEngine.Version == "1.0.3" && InstallEngine.ReadCatalog().Version == "1.0.3", "installer_catalog_identity");
             Check(InstallEngine.Digest(oldStub) == "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B", "actual_published_101_uninstaller");
             var pins = AssetUninstall.Published101Catalog().Files.Where(file => UserRegistration.Published100Pins.ContainsKey(file.Path)).ToArray();
             Check(pins.Length == 5, "actual_published_101_launch_pins");

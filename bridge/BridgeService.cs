@@ -40,7 +40,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
         if (method is not ("GET" or "POST")) throw new ApiFault(405, "method_rejected");
         if (path.Contains('?') || path.Contains('%')) throw new ApiFault(400, "query_or_encoding_rejected");
         if (origin is not null && !Security.ValidOrigin(origin)) throw new ApiFault(403, "origin_rejected");
-        if (method == "GET" && path == "/health") return new(200, new { service = "soda-asset-quick-read", version = "1.0.2", protocolVersion = 1, capabilities = new[] { "asset_snapshot", "explicit_uac_start", "cancel" }, state = "idle" });
+        if (method == "GET" && path == "/health") return new(200, new { service = "soda-asset-quick-read", version = "1.0.3", protocolVersion = 1, capabilities = new[] { "asset_snapshot", "explicit_uac_start", "cancel" }, state = "idle" });
         if (!Security.ValidOrigin(origin)) throw new ApiFault(403, "origin_required");
         if (method == "POST" && path == "/connect")
         {
@@ -53,7 +53,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
                 if (tokens.Count >= 32) throw new ApiFault(429, "pairing_limit");
                 tokens.Add(token, new(origin!, expiry));
             }
-            return new(200, new { token, version = "1.0.2", expiresAt = expiry });
+            return new(200, new { token, version = "1.0.3", expiresAt = expiry });
         }
         var owner = Authenticate(origin!, authorization);
         if (method == "POST" && path == "/jobs")

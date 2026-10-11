@@ -9,7 +9,7 @@ internal interface IRegistration { void Apply(string executable); void Rollback(
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.0.2";
+    internal const string Version = "1.0.3";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)
@@ -44,10 +44,11 @@ internal static class InstallEngine
             if (new FileInfo(file).Length != item.Size || Digest(file) != item.Sha256) throw new IOException("installed_hash_mismatch");
         }
     }
-    internal static string Install(string archive, Catalog catalog, string root, IRegistration registration, CancellationToken cancellation, Action<int> progress, Func<CatalogFile, CancellationToken, Stream>? download = null)
+    internal static string Install(string archive, Catalog catalog, string root, IRegistration registration, CancellationToken cancellation, Action<int> progress, Func<CatalogFile, CancellationToken, Stream>? download = null, InstallerDiagnostics? diagnostics = null)
     {
         if (catalog.Version != Version || catalog.Files.Length == 0 || catalog.Files.Select(x => x.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != catalog.Files.Length) throw new IOException("catalog_identity_rejected");
         NoLinks(archive); NoLinks(root);
+        diagnostics?.Record("payload_verify");
         if (Digest(archive) != catalog.ArchiveSha256) throw new IOException("payload_hash_mismatch");
         var versions = Path.Combine(root, "versions"); var final = Path.Combine(versions, Version);
         var staging = Path.Combine(versions, ".install-" + Guid.NewGuid().ToString("N"));
@@ -62,6 +63,7 @@ internal static class InstallEngine
         Directory.CreateDirectory(staging); var promoted = false;
         try
         {
+            diagnostics?.Record("copy");
             using var zip = ZipFile.OpenRead(archive);
             if (zip.Entries.Count != catalog.Files.Count(x => !x.Download)) throw new IOException("payload_file_set_mismatch");
             long copied = 0, total = Math.Max(1, catalog.Files.Sum(x => x.Size));
@@ -80,11 +82,18 @@ internal static class InstallEngine
                 }
                 if (Digest(path) != pin.Sha256) throw new IOException("payload_file_hash_mismatch");
             }
-            foreach (var pin in catalog.Files.Where(x => x.Download))
+            var protocolFiles = catalog.Files.Where(x => x.Download).ToArray();
+            diagnostics?.Record("protocol");
+            var progressGate = new object();
+            try { Parallel.ForEach(Enumerable.Range(0, protocolFiles.Length), new ParallelOptions { CancellationToken = cancellation, MaxDegreeOfParallelism = 3 }, index =>
             {
+                var pin = protocolFiles[index];
                 cancellation.ThrowIfCancellationRequested();
                 var path = Safe(staging, pin.Path); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                using var input = (download ?? ProtocolDownload.Open)(pin, cancellation);
+                var reused = ReuseProtocol(root, pin);
+                if (reused is not null) diagnostics?.Record("protocol", "verified", index, "verified_local");
+                using var input = reused ?? (download is not null ? download(pin, cancellation)
+                    : ProtocolDownload.Open(pin, cancellation, (source, code) => diagnostics?.Record("protocol", code, index, source)));
                 using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
                 {
                     var buffer = new byte[65536]; int count; long received = 0;
@@ -92,16 +101,18 @@ internal static class InstallEngine
                     {
                         cancellation.ThrowIfCancellationRequested(); received += count;
                         if (received > pin.Size) throw new IOException("protocol_download_size_mismatch");
-                        output.Write(buffer, 0, count); copied += count; progress((int)Math.Min(95, copied * 95 / total));
+                        output.Write(buffer, 0, count);
+                        lock (progressGate) { copied += count; progress((int)Math.Min(95, copied * 95 / total)); }
                     }
                     if (received != pin.Size) throw new IOException("protocol_download_incomplete");
                 }
                 if (Digest(path) != pin.Sha256) throw new IOException("protocol_download_hash_mismatch");
-            }
-            Verify(staging, catalog); cancellation.ThrowIfCancellationRequested();
+                diagnostics?.Record("protocol", "verified", index);
+            }); } catch (AggregateException error) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }
+            diagnostics?.Record("verify"); Verify(staging, catalog); cancellation.ThrowIfCancellationRequested();
             Directory.Move(staging, final); promoted = true;
             cancellation.ThrowIfCancellationRequested();
-            registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe"));
+            diagnostics?.Record("register"); registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe"));
             progress(100); return final;
         }
         catch
@@ -110,6 +121,24 @@ internal static class InstallEngine
             RemoveOwned(promoted ? final : staging, versions);
             throw;
         }
+    }
+    internal static Stream? ReuseProtocol(string root, CatalogFile pin)
+    {
+        // Only the three fixed protocol identities may be borrowed; old versions are read-only.
+        ProtocolDownload.Url(pin);
+        foreach (var version in new[] { "1.0.2", "1.0.1", "1.0.0" })
+        {
+            try
+            {
+                var path = Safe(Path.Combine(root, "versions", version), pin.Path);
+                if (!File.Exists(path) || new FileInfo(path).Length != pin.Size) continue;
+                using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                if (Convert.ToHexString(SHA256.HashData(input)) != pin.Sha256) continue;
+                input.Position = 0; var bytes = new MemoryStream(); input.CopyTo(bytes); bytes.Position = 0; return bytes;
+            }
+            catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+        return null;
     }
     private static void RemoveOwned(string path, string parent)
     {

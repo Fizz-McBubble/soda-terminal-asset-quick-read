@@ -53,7 +53,7 @@ internal static class Program
             using var shutdown = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdown.Cancel(); };
             await app.StartAsync(shutdown.Token);
-            Console.WriteLine($"Soda Asset Quick Read 1.0.2 listening on 127.0.0.1:{Port}; capture requires an explicit browser start and UAC.");
+            Console.WriteLine($"Soda Asset Quick Read 1.0.3 listening on 127.0.0.1:{Port}; capture requires an explicit browser start and UAC.");
             var identityServer = LaunchIdentity.IdentityServer(shutdown.Token);
             try { await app.WaitForShutdownAsync(shutdown.Token); }
             finally

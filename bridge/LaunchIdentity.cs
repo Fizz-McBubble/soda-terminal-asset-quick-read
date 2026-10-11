@@ -9,7 +9,7 @@ namespace Soda.AssetQuickRead;
 
 internal static class LaunchIdentity
 {
-    internal const string Version = "1.0.2";
+    internal const string Version = "1.0.3";
     internal const string PipeName = "SodaTerminal.AssetQuickRead.Identity.50609";
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
@@ -41,7 +41,7 @@ internal static class LaunchIdentity
             {
                 using var pipe = new NamedPipeServerStream(name, PipeDirection.Out, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(cancellation);
-                await pipe.WriteAsync("soda-asset-quick-read/1.0.2"u8.ToArray(), cancellation);
+                await pipe.WriteAsync("soda-asset-quick-read/1.0.3"u8.ToArray(), cancellation);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return; }
             catch (IOException) { await Task.Delay(100, cancellation); }
@@ -59,7 +59,7 @@ internal static class LaunchIdentity
             if (executable is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" || !SameFiles(AppContext.BaseDirectory, Path.GetDirectoryName(executable)!)) return false;
             using var timeout = new CancellationTokenSource(500);
             using var reader = new StreamReader(pipe);
-            return await reader.ReadToEndAsync(timeout.Token) == "soda-asset-quick-read/1.0.2";
+            return await reader.ReadToEndAsync(timeout.Token) == "soda-asset-quick-read/1.0.3";
         }
         catch { return false; }
     }

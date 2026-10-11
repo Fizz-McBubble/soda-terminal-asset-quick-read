@@ -57,7 +57,14 @@ internal sealed partial class InstallForm : Form
         uninstall.Enabled = false;
         progress.Visible = true; progress.Value = 0; progress.Indeterminate = true;
         var token = running.Token;
-        var reporter = new Progress<int>(value => { if (running is null) return; progress.Indeterminate = false; progress.Value = Math.Clamp(value, 0, 100); text.Text = "正在安装资产快读…"; });
+        var diagnostics = new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"), phase =>
+        {
+            if (!IsHandleCreated) return;
+            BeginInvoke(() => { if (running is null) return; text.Text = phase switch
+                { "protocol" => "正在获取并校验所需数据…", "verify" => "正在校验安装文件…", "register" => "正在添加工具入口…", "copy" => "正在写入安装文件…", _ => text.Text }; });
+        });
+        diagnostics.Record("prepare");
+        var reporter = new Progress<int>(value => { if (running is null) return; progress.Indeterminate = false; progress.Value = Math.Clamp(value, 0, 100); });
         string? temporary = null;
         try
         {
@@ -82,16 +89,17 @@ internal sealed partial class InstallForm : Form
                 else
                     for (var attempt = 0; !File.Exists(Path.Combine(payload, "ready")); attempt++)
                     { token.ThrowIfCancellationRequested(); if (File.Exists(Path.Combine(payload, "failed")) || attempt >= 600) throw new IOException("offline_payload_unavailable"); await Task.Delay(200, token); }
-                installed = await Task.Run(() => InstallEngine.Install(Path.Combine(payload, "asset-quick-read.zip"), InstallEngine.ReadCatalog(), InstallEngine.DefaultRoot, new InstallRegistration(InstallEngine.DefaultRoot), token, ((IProgress<int>)reporter).Report), token);
+                installed = await Task.Run(() => InstallEngine.Install(Path.Combine(payload, "asset-quick-read.zip"), InstallEngine.ReadCatalog(), InstallEngine.DefaultRoot, new InstallRegistration(InstallEngine.DefaultRoot), token, ((IProgress<int>)reporter).Report, diagnostics: diagnostics), token);
             }
             finally { operation.ReleaseMutex(); }
             }
             text.Text = "安装完成，打开工具后返回网页连接。";
+            diagnostics.Record("complete", "completed");
             UpdateDetails("资产快读已安装。开始菜单也可打开「Soda Terminal 资产快读」。当前没有读取游戏或启动采集。");
             action.Text = "打开工具";
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { text.Text = "安装已取消，可以重新安装。"; UpdateDetails("本次新建安装文件已回滚，已有版本和读取结果保留。"); progress.Visible = false; action.Text = "重新安装"; }
-        catch (Exception error) { ShowInstallError(error.Message); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { diagnostics.Record("cancelled", "installer_cancelled"); text.Text = "安装已取消，可以重新安装。"; UpdateDetails("本次新建安装文件已回滚，已有版本和读取结果保留。"); progress.Visible = false; action.Text = "重新安装"; }
+        catch (Exception error) { var code = InstallerDiagnostics.Code(error); diagnostics.Record("failed", code); ShowInstallError(code); }
         finally
         {
             if (temporary is not null && Directory.Exists(temporary))

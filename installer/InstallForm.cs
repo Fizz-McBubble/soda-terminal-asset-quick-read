@@ -123,10 +123,9 @@ internal sealed partial class InstallForm
     }
     private void ShowInstallError(string message)
     {
-        text.Text = message == "another_installer_is_running" ? "已有安装正在进行，请稍后重试。"
-            : message.Contains("payload") || message.Contains("archive") || message.Contains("catalog")
-                ? "安装包不完整，请重新下载。" : "安装未完成，请检查网络后重试。";
-        UpdateDetails(message + "\r\n已有版本、读取结果和账户已保留。");
+        var code = InstallerDiagnostics.Code(new IOException(message));
+        text.Text = InstallerDiagnostics.Message(code);
+        UpdateDetails("诊断代码：" + code + "\r\n诊断记录：%LOCALAPPDATA%/SodaTerminal/AssetQuickRead/installer-diagnostics/latest.json\r\n已有版本、读取结果和账户已保留。");
         progress.Visible = false; action.Text = "重试";
     }
 
