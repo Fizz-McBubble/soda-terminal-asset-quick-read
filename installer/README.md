@@ -1,15 +1,15 @@
 # Independent Asset Quick Read installer
 
-Current source is a local 1.0.1 candidate, separate from the published 1.0.0 installer and download manifests. Pass `-RuntimeDirectory <new-reviewed-runtime>` to `Build-AssetQuickReadInstaller.ps1` when building a candidate. This directory must match the Bridge's fixed native SHA256, approved drivers and fixed protocol hashes. Neither build nor self-tests perform a real installation or capture.
+Version 1.0.1 is published; the 1.0.0 installer remains available for recovery. Pass `-RuntimeDirectory <new-reviewed-runtime>` to `Build-AssetQuickReadInstaller.ps1` when rebuilding. This directory must match the Bridge's fixed native SHA256, approved drivers and fixed protocol hashes. Neither build nor self-tests perform a real installation or capture.
 
-The default output is a real Windows x64 .NET 8 self-contained compressed single-file installer: `SodaTerminal-AssetReader-Setup-1.0.1.exe`. The standard SDK single-file publisher embeds the reviewed runtime payload and its SHA-256 catalog. It needs neither a separately installed .NET runtime nor NSIS to run. NSIS 3.13 remains an optional packaging wrapper with its unchanged pinned toolchain and complete mixed-license notice; it is not part of the default shipped installer.
+The output is a real Windows x64 .NET 8 self-contained installer: `SodaTerminal-AssetReader-Setup-1.0.1.exe`. The published package uses the pinned NSIS 3.13 compression wrapper around the branded installer and reviewed runtime payload. It needs no separately installed .NET runtime or NSIS; its complete runtime and wrapper license notices are retained.
 
 ```powershell
 ./Build-Bridge.ps1 -DotNetPath <dotnet.exe> -OutputDirectory <new-build-directory> -RunTests
 ./Build-AssetQuickReadInstaller.ps1 -DotNetPath <dotnet.exe> -BridgeOutputDirectory <new-build-directory> -OutputDirectory <new-installer-directory> -RunTests
 ```
 
-Build uses the .NET 8 SDK, win-x64 runtime/reference packages at 8.0.29; standard NuGet sources are used when dependencies are not already cached. All output directories must be new. Optional `-NsisPath <makensis.exe>` checks the exact compiler hash in `installer/nsis-toolchain.json`. No build or self-test writes HKCU, requests UAC, captures traffic, loads a driver or reads a player's game files. Self-tests substitute local fixture protocol streams; they never download protocol data.
+Build uses the .NET 8 SDK, cached win-x64 runtime/reference packages at 8.0.29 and disabled NuGet sources. All output directories must be new. Optional `-NsisPath <makensis.exe>` checks the exact compiler hash in `installer/nsis-toolchain.json`. No build or self-test writes HKCU, requests UAC, captures traffic, loads a driver or reads a player's game files. Self-tests substitute local fixture protocol streams; they never download protocol data.
 
 Only clicking **开始安装 / 升级安装 / 修复安装** authorizes the installer to create `%LOCALAPPDATA%/SodaTerminal/AssetQuickRead/versions/1.0.1`, register the current-user protocol and add `Soda Terminal 资产快读` to the Start menu. The installer displays the tool name, installation version, and the recognized existing version. Installation details explain this boundary; the compact branded window keeps progress, success and retry messages free of internal error codes. The complete .NET/runtime/WinDivert file payload is embedded. The three protocol JSON files are deliberately absent from the embedded payload because their distribution permission is separate from the upstream MIT code license. Installation downloads exactly these public files from the fixed upstream commit, with no cookies, credentials or redirects:
 
