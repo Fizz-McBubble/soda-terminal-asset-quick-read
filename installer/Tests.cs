@@ -147,6 +147,7 @@ internal static class Tests
                 passed += InstallerExperienceTests.RunFullPackage(Path.Combine(root, "full-uninstall"), realArchive, realCatalog, privatePayload);
             }
             passed += InstallerExperienceTests.Run(root, archive, catalog);
+            passed += UninstallVersionTests.Run(root);
             File.WriteAllText(evidencePath, JsonSerializer.Serialize(new { suite = "asset-quick-read-installer", passed, syntheticRoot = root, published100FixtureVerified = legacyFixture is not null, registryWrites = 0, captureStarted = false, uacRequested = false, exitCode = 0 })); return 0;
         }
         catch (Exception error) { File.WriteAllText(evidencePath, JsonSerializer.Serialize(new { passed, error = error.ToString(), exitCode = 1 })); return 1; }

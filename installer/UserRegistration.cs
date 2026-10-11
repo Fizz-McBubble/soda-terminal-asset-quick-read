@@ -38,12 +38,36 @@ internal sealed class UserRegistration : IRegistration
     {
         var existing = store.Read();
         if (existing?.Description != Description || existing.UrlProtocol != "" || !existing.OwnedShape) return null;
-        foreach (var version in new[] { InstallEngine.Version, "1.0.4", "1.0.3", "1.0.2", "1.0.1", "1.0.0" })
+        foreach (var version in InstallRegistration.PublishedVersions.Prepend(InstallEngine.Version).Distinct())
             if (existing.Command == Command(Path.Combine(root, "versions", version, "Soda.AssetQuickRead.Bridge.exe"))) return version;
         return null;
     }
     internal bool TrustedInstalledVersion(string root, string version) => InstalledVersion(root) == version &&
         store.Read() is { } existing && Published100Upgrade(Path.Combine(root, "versions", InstallEngine.Version, "Soda.AssetQuickRead.Bridge.exe"), existing);
+    internal bool RecoverableInstalledVersion(string root, string version)
+    {
+        // A missing protocol is repairable; an existing foreign protocol is not.
+        // The historical uninstaller AND every pinned launch component must match.
+        var existing = store.Read();
+        var expected = new ProtocolRegistration(Description, "", Command(Path.Combine(root, "versions", version, "Soda.AssetQuickRead.Bridge.exe")), true);
+        return (existing is null || existing == expected) && PublishedRuntimeMatches(Path.Combine(root, "versions", version), version);
+    }
+    internal ProtocolRegistration? PreflightRemoval(string root, IReadOnlyCollection<string> versions)
+    {
+        var existing = store.Read();
+        if (existing is not null && !versions.Any(version => existing == new ProtocolRegistration(Description, "",
+            Command(Path.Combine(root, "versions", version, "Soda.AssetQuickRead.Bridge.exe")), true)))
+            throw new IOException("protocol_registration_conflict");
+        AssertRemovalUnchanged(existing);
+        return existing;
+    }
+    internal void AssertRemovalUnchanged(ProtocolRegistration? expected)
+    {
+        if (store.Read() != expected) throw new IOException("protocol_registration_changed");
+        InstallEngine.NoLinks(shortcut);
+        if (File.Exists(shortcut) && File.ReadAllText(shortcut) != ShortcutBody)
+            throw new IOException("start_menu_shortcut_conflict");
+    }
     internal void RemoveMatching(string executable)
     {
         var existing = store.Read();
@@ -58,15 +82,20 @@ internal sealed class UserRegistration : IRegistration
         var versions = version is null ? null : Path.GetDirectoryName(version);
         if (version is null || versions is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" ||
             Path.GetFileName(version) != InstallEngine.Version || Path.GetFileName(versions) != "versions") return false;
-        var oldVersion = new[] { "1.0.4", "1.0.3", "1.0.2", "1.0.1", "1.0.0" }.FirstOrDefault(candidate =>
+        var oldVersion = InstallRegistration.PublishedVersions.FirstOrDefault(candidate =>
             existing.Command == Command(Path.Combine(versions, candidate, "Soda.AssetQuickRead.Bridge.exe")));
         if (oldVersion is null) return false;
         var previous = Path.Combine(versions, oldVersion);
         if (existing.Command != Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe"))) return false;
+        return PublishedRuntimeMatches(previous, oldVersion);
+    }
+    private bool PublishedRuntimeMatches(string previous, string oldVersion)
+    {
         try
         {
-            // Installer 1.0.4 reused the immutable 1.0.3 runtime payload.
-            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion is "1.0.3" or "1.0.4" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
+            if (!InstallRegistration.PublishedVersions.Contains(oldVersion)) return false;
+            // Installers 1.0.4-1.0.6 reused the immutable 1.0.3 runtime payload.
+            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion is "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
                 .Where(file => Published100Pins.ContainsKey(file.Path)).ToDictionary(file => file.Path, file => file.Sha256);
             foreach (var pin in pins)
             {

@@ -40,14 +40,14 @@ internal static class UpgradeIdentityTests
         void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks.Add(name); }
         try
         {
-            Check(InstallEngine.Version == "1.0.5" && InstallEngine.ReadCatalog().Version == InstallEngine.Version, "installer_catalog_identity");
+            Check(InstallEngine.ReadCatalog().Version == InstallEngine.Version, "installer_catalog_identity");
             Check(InstallEngine.Digest(oldStub) == "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B", "actual_published_101_uninstaller");
             var pins = AssetUninstall.Published101Catalog().Files.Where(file => UserRegistration.Published100Pins.ContainsKey(file.Path)).ToArray();
             Check(pins.Length == 5, "actual_published_101_launch_pins");
-            foreach (var outcome in new[] { "success", "rollback", "foreign-stub", "orphan-success", "orphan-rollback", "orphan-foreign-stub", "orphan-foreign-runtime", "orphan-foreign-protocol", "orphan-missing-protocol", "orphan-registry-race", "orphan-stub-race", "orphan-runtime-race", "orphan-protocol-race" })
+            foreach (var outcome in new[] { "success", "rollback", "foreign-stub", "orphan-success", "orphan-rollback", "orphan-foreign-stub", "orphan-foreign-runtime", "orphan-foreign-protocol", "orphan-missing-protocol", "orphan-missing-protocol-rollback", "orphan-missing-protocol-foreign-runtime", "orphan-missing-protocol-race", "orphan-registry-race", "orphan-stub-race", "orphan-runtime-race", "orphan-protocol-race" })
             {
                 var orphan = outcome.StartsWith("orphan-", StringComparison.Ordinal);
-                var success = outcome is "success" or "orphan-success";
+                var success = outcome is "success" or "orphan-success" or "orphan-missing-protocol";
                 var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(output)!, "upgrade-" + outcome + "-" + Guid.NewGuid().ToString("N")));
                 var previous = Path.Combine(root, "versions", "1.0.1");
                 foreach (var pin in pins)
@@ -58,10 +58,10 @@ internal static class UpgradeIdentityTests
                 var originalHash = InstallEngine.Digest(installedStub);
                 var protocol = new ProtocolStore { Value = new(UserRegistration.Description, "", UserRegistration.Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe")), true) };
                 if (outcome == "orphan-foreign-protocol") protocol.Value = protocol.Value with { OwnedShape = false };
-                if (outcome == "orphan-missing-protocol") protocol.Value = null;
+                if (outcome.StartsWith("orphan-missing-protocol", StringComparison.Ordinal)) protocol.Value = null;
                 var oldProtocol = protocol.Value;
-                var store = new UninstallStore { Value = orphan ? null : InstallRegistration.Record(root) with { Version = "1.0.1" }, Fail = outcome is "rollback" or "orphan-rollback" };
-                var runtimeChanged = outcome == "orphan-foreign-runtime";
+                var store = new UninstallStore { Value = orphan ? null : InstallRegistration.Record(root) with { Version = "1.0.1" }, Fail = outcome is "rollback" or "orphan-rollback" or "orphan-missing-protocol-rollback" };
+                var runtimeChanged = outcome is "orphan-foreign-runtime" or "orphan-missing-protocol-foreign-runtime";
                 var registration = new UserRegistration(protocol, Path.Combine(root, "start-menu", "reader.url"), path =>
                 {
                     if (runtimeChanged) return "UNKNOWN";
@@ -79,6 +79,7 @@ internal static class UpgradeIdentityTests
                     if (outcome == "orphan-stub-race") File.WriteAllText(installedStub, "CHANGED AFTER PREFLIGHT");
                     if (outcome == "orphan-runtime-race") runtimeChanged = true;
                     if (outcome == "orphan-protocol-race") protocol.Value = oldProtocol = protocol.Value! with { OwnedShape = false };
+                    if (outcome == "orphan-missing-protocol-race") protocol.Value = oldProtocol = new("FOREIGN", "", "FOREIGN", false);
                     entries.Apply(target); Check(success, outcome + "_must_reject");
                 }
                 catch (IOException) { Check(!success, outcome + "_expected_failure"); store.Fail = false; entries.Rollback(); }

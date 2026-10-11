@@ -89,10 +89,29 @@ internal static class InstallerExperienceTests
             Check(File.ReadAllText(Path.Combine(install, "jobs", "keep.json")) == "PRESERVE");
         }
         ApplicationConfiguration.Initialize();
+        var discoveryRoot = Path.Combine(root, "installation-discovery");
+        Directory.CreateDirectory(discoveryRoot);
+        Check(!InstallForm.HasInstallationTraces(discoveryRoot, null));
+        Directory.CreateDirectory(Path.Combine(discoveryRoot, "jobs"));
+        File.WriteAllText(Path.Combine(discoveryRoot, "jobs", "keep.json"), "PRESERVE");
+        Check(!InstallForm.HasInstallationTraces(discoveryRoot, null));
+        var ownedRecord = InstallRegistration.Record(Path.GetFullPath(discoveryRoot));
+        Check(InstallForm.HasInstallationTraces(discoveryRoot, ownedRecord with { Version = "1.0.4" }));
+        Check(!InstallForm.HasInstallationTraces(discoveryRoot, ownedRecord with { OwnedShape = false }));
+        Check(!InstallForm.HasInstallationTraces(discoveryRoot, ownedRecord with { Root = root }));
+        var trace = Path.Combine(discoveryRoot, "versions", "1.0.4", "Soda.AssetQuickRead.Bridge.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(trace)!); File.WriteAllText(trace, "SYNTHETIC_TRACE");
+        Check(InstallForm.HasInstallationTraces(discoveryRoot, null));
+        using (var partialForm = new InstallForm(preview: true))
+        {
+            partialForm.SetInstalledVersion(null, true); Show(partialForm);
+            Check(Button(partialForm, "卸载").Visible && Has(partialForm, "修复安装"));
+        }
+        Check(File.ReadAllText(trace) == "SYNTHETIC_TRACE" && File.ReadAllText(Path.Combine(discoveryRoot, "jobs", "keep.json")) == "PRESERVE");
         passed += RunHandlers(root, archive, catalog, sample, stubHash);
         var render = Path.Combine(root, "installer-ui"); Directory.CreateDirectory(render);
         foreach (var scale in new[] { 1f, 1.25f, 1.5f })
-        foreach (var state in new[] { "initial", "preparing", "progress", "completion", "started", "cancelled", "error", "upgrade", "repair" })
+        foreach (var state in new[] { "initial", "preparing", "progress", "starting", "completion", "started", "start-error", "cancelled", "error", "upgrade", "repair" })
         {
             using var form = new InstallForm(preview: true);
             if (state is "upgrade" or "repair") form.SetInstalledVersion(state == "upgrade" ? "1.0.0" : "1.0.1");
@@ -101,10 +120,14 @@ internal static class InstallerExperienceTests
             form.Location = new Point(-32000, -32000); form.Opacity = 0; form.Show();
             var ratio = scale / (form.DeviceDpi / 96f); form.Scale(new SizeF(ratio, ratio));
             Application.DoEvents();
-            Save(""); form.ToggleDetails(); Application.DoEvents(); Save("-details");
+            Save("");
             var panel = form.Controls.OfType<Panel>().Single();
             Check(panel.Bottom <= form.Controls.OfType<Button>().Min(button => button.Top));
             Check(panel.Controls.OfType<TextBox>().Single().ReadOnly);
+            Check(panel.Controls.OfType<TextBox>().Single().Visible);
+            Check(panel.Controls.OfType<TextBox>().Single().ScrollBars == ScrollBars.None);
+            Check(!panel.Controls.OfType<TextBox>().Single().TabStop && panel.Controls.OfType<TextBox>().Single().SelectionLength == 0);
+            Check(!panel.Controls.OfType<LinkLabel>().Any());
             foreach (Control control in panel.Controls) Check(control.Right <= panel.Width && control.Bottom <= panel.Height);
             if (state == "error") Check(!panel.Controls.OfType<Label>().Any(label => label.Text.Contains("synthetic")));
             form.Close();
@@ -126,14 +149,14 @@ internal static class InstallerExperienceTests
         var registration = new UserRegistration(protocol, shortcut);
         var entries = new InstallRegistration(root, registration, store, () => new MemoryStream(sample));
         var dispatches = new List<System.Diagnostics.ProcessStartInfo>();
-        var serviceAttempts = 0; var browserAttempts = 0;
+        var serviceAttempts = 0; var installAttempts = 0;
         var operations = new FormOperations(root,
-            (progress, token) => Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token),
+            (progress, token) => { installAttempts++; return Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token); },
             start =>
             {
                 dispatches.Add(start);
                 if (start.Arguments == "--serve" && ++serviceAttempts == 1) throw new IOException("synthetic_launch_failure");
-                if (start.FileName.StartsWith("https://") && ++browserAttempts == 1) throw new IOException("synthetic_browser_failure");
+                if (start.FileName.StartsWith("https://")) throw new Exception("unexpected_browser_dispatch");
                 return Task.CompletedTask;
             },
             () => Task.Run(() => AssetUninstall.Remove(root, catalog, registration, store, stubHash)));
@@ -141,23 +164,44 @@ internal static class InstallerExperienceTests
         {
             Show(form); Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "重试"));
             Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut));
-            store.Fail = false; Button(form, "重试").PerformClick(); Pump(() => Has(form, "打开工具"));
+            store.Fail = false; Button(form, "重试").PerformClick(); Pump(() => Has(form, "重试启动"));
             Check(protocol.Value != null && store.Value != null && File.Exists(Path.Combine(root, "uninstall.exe")));
-            Button(form, "打开工具").PerformClick(); Pump(() => serviceAttempts == 1); Check(Has(form, "打开工具"));
-            Button(form, "打开工具").PerformClick(); Pump(() => Has(form, "返回网页"));
+            Check(Button(form, "卸载").Visible);
+            Check(serviceAttempts == 1 && installAttempts == 2);
+            using (var diagnostics = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "installer-diagnostics", "latest.json"))))
+                Check(diagnostics.RootElement.GetProperty("events").EnumerateArray().Any(entry => entry.GetProperty("phase").GetString() == "complete"));
+            Button(form, "重试启动").PerformClick(); Pump(() => Has(form, "完成"));
+            Check(serviceAttempts == 2 && installAttempts == 2);
             Check(dispatches.Take(2).All(start => start.FileName == Path.Combine(root, "versions", catalog.Version, "Soda.AssetQuickRead.Bridge.exe") && start.Arguments == "--serve" && start.WorkingDirectory == Path.GetDirectoryName(start.FileName)));
-            Button(form, "返回网页").PerformClick(); Pump(() => browserAttempts == 1); Check(!form.IsDisposed);
-            Button(form, "返回网页").PerformClick(); Pump(() => form.IsDisposed);
-            Check(dispatches.Last().FileName == "https://sodaterminal.com/system/scanner" && dispatches.Last().UseShellExecute);
+            Button(form, "完成").PerformClick(); Check(form.IsDisposed);
+            Check(dispatches.Count == 2 && dispatches.All(start => start.Arguments == "--serve" && start.UseShellExecute));
         }
         using (var form = new InstallForm(true, operations))
         {
             form.SetInstalledVersion(registration.InstalledVersion(root)); Show(form);
-            Button(form, "修复安装").PerformClick(); Pump(() => Has(form, "打开工具"));
-            Check(File.Exists(Path.Combine(root, "uninstall.exe")));
+            Button(form, "修复安装").PerformClick(); Pump(() => Has(form, "完成"));
+            Check(File.Exists(Path.Combine(root, "uninstall.exe")) && serviceAttempts == 3 && installAttempts == 3);
             Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"));
             Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(root, "uninstall.exe")));
+            Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "完成"));
+            Check(serviceAttempts == 4 && installAttempts == 4);
+            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"));
+            Check(protocol.Value is null && store.Value is null);
             Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
+        }
+        {
+            var pendingRoot = Path.Combine(baseRoot, "start-pending-handlers");
+            var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var installs = 0; var starts = 0;
+            using var form = new InstallForm(true, new FormOperations(pendingRoot,
+                (_, _) => { installs++; return Task.FromResult(Path.Combine(pendingRoot, "versions", catalog.Version)); },
+                start => { Check(start.Arguments == "--serve"); starts++; return pending.Task; }, () => Task.CompletedTask));
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => starts == 1);
+            Check(!Button(form, "开始安装").Enabled && !Button(form, "关闭").Enabled && !Button(form, "卸载").Enabled);
+            Button(form, "开始安装").PerformClick(); form.Close(); Check(!form.IsDisposed && starts == 1 && installs == 1);
+            pending.SetResult(); Pump(() => Has(form, "完成"));
+            Check(starts == 1 && installs == 1);
+            Button(form, "完成").PerformClick(); Check(form.IsDisposed && starts == 1);
         }
         using (var form = new InstallForm(true, operations with { Install = async (_, token) => { await Task.Delay(Timeout.Infinite, token); return "unreachable"; } }))
         {

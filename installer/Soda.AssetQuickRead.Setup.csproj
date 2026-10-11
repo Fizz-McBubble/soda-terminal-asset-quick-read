@@ -2,9 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.0.5</Version>
+    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.0.7</Version>
     <ApplicationIcon>soda-brand-icon.ico</ApplicationIcon><Product>Soda Terminal · 资产快读</Product>
-    <Description>Soda Terminal 资产快读安装程序</Description><FileVersion>1.0.5.0</FileVersion>
+    <Description>Soda Terminal 资产快读安装程序</Description><FileVersion>1.0.7.0</FileVersion>
     <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained><RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

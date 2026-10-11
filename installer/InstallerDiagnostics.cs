@@ -9,6 +9,12 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly object gate = new();
     private readonly List<object> events = new();
+    private static readonly Lazy<string?> ExecutableHash = new(() =>
+    {
+        try { return Environment.ProcessPath is { } path ? InstallEngine.Digest(path) : null; }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    });
     internal static string Code(Exception error)
     {
         if (error is UnauthorizedAccessException) return "installer_access_denied";
@@ -39,7 +45,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         {
             InstallEngine.NoLinks(directory); Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, "latest.json"); InstallEngine.NoLinks(path);
-            File.WriteAllText(path, JsonSerializer.Serialize(new { schema = "soda-asset-installer-diagnostic/v1", version = InstallEngine.Version, writtenUtc = DateTime.UtcNow, events }));
+            File.WriteAllText(path, JsonSerializer.Serialize(new { schema = "soda-asset-installer-diagnostic/v1", version = InstallEngine.Version, processId = Environment.ProcessId, executableSha256 = ExecutableHash.Value, writtenUtc = DateTime.UtcNow, events }));
         }
         catch (IOException) { } catch (UnauthorizedAccessException) { }
     }

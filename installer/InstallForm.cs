@@ -10,18 +10,17 @@ internal sealed partial class InstallForm
     private readonly Button cancel = new();
     private readonly Button uninstall = new();
     private readonly Panel card = new();
-    private readonly LinkLabel detailsLink = new();
     private readonly TextBox details = new();
     private static readonly Color Purple = Color.FromArgb(107, 89, 148);
 
     private void InitializeInterface()
     {
         SuspendLayout();
-        Text = "Soda Terminal · 资产快读"; ClientSize = new Size(520, 284);
+        Text = "Soda Terminal · 资产快读"; ClientSize = new Size(520, 348);
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen; BackColor = Color.White;
         Font = new Font("Microsoft YaHei UI", 9f); Padding = new Padding(32);
-        card.Location = new Point(32, 24); card.Size = new Size(456, 180); card.BackColor = Color.White;
+        card.Location = new Point(32, 24); card.Size = new Size(456, 244); card.BackColor = Color.White;
         using var brandStream = typeof(InstallForm).Assembly.GetManifestResourceStream("soda-brand-icon.png");
         if (brandStream is not null)
         {
@@ -37,21 +36,17 @@ internal sealed partial class InstallForm
             Text = "安装版本 " + InstallEngine.Version, ForeColor = Color.FromArgb(108, 101, 120), Name = "version" });
         text.Location = new Point(0, 82); text.Size = new Size(454, 36);
         text.Font = new Font("Microsoft YaHei UI", 10.5f); text.ForeColor = Color.FromArgb(55, 48, 67);
-        text.Text = "安装后，打开工具并返回网页连接。"; text.AccessibleRole = AccessibleRole.StaticText;
+        text.Text = "安装后，返回网页连接即可读取。"; text.AccessibleRole = AccessibleRole.StaticText;
         progress.Location = new Point(0, 130); progress.Size = new Size(456, 6);
         progress.Visible = false; progress.AccessibleName = "安装进度";
-        detailsLink.Location = new Point(0, 146); detailsLink.Size = new Size(100, 24);
-        detailsLink.Text = "安装详情"; detailsLink.LinkColor = Color.FromArgb(108, 101, 120);
-        detailsLink.ActiveLinkColor = Purple; detailsLink.VisitedLinkColor = Purple;
-        detailsLink.LinkBehavior = LinkBehavior.HoverUnderline; detailsLink.TabIndex = 2;
-        detailsLink.LinkClicked += (_, _) => ToggleDetails();
-        details.Location = new Point(0, 176); details.Size = new Size(456, 100);
+        details.Location = new Point(0, 150); details.Size = new Size(456, 88);
         details.ForeColor = Color.FromArgb(108, 101, 120); details.BackColor = Color.White;
-        details.BorderStyle = BorderStyle.None; details.Visible = false; details.ReadOnly = true;
-        details.Multiline = true; details.ScrollBars = ScrollBars.Vertical; details.TabIndex = 3;
+        details.BorderStyle = BorderStyle.None; details.ReadOnly = true;
+        details.Multiline = true; details.ScrollBars = ScrollBars.None; details.TabIndex = 3;
+        details.TabStop = false;
         details.AccessibleName = "安装详情";
-        UpdateDetails("安装到当前用户目录，添加开始菜单入口。安装时下载并校验所需数据，请保持网络连接。\r\n打开工具不会读取游戏；开始读取仍需在网页确认并允许管理员权限。");
-        card.Controls.AddRange([text, progress, detailsLink, details]); Controls.Add(card);
+        UpdateDetails("安装到当前用户目录，并添加开始菜单入口。安装时下载并校验数据，请保持网络连接。\r\n开始读取需在网页确认并允许管理员权限。");
+        card.Controls.AddRange([text, progress, details]); Controls.Add(card);
         StyleButton(action, "开始安装", true); action.TabIndex = 0;
         StyleButton(cancel, "关闭", false); cancel.TabIndex = 1;
         StyleButton(uninstall, "卸载", false); uninstall.TabIndex = 4; uninstall.Visible = false;
@@ -59,7 +54,8 @@ internal sealed partial class InstallForm
         Controls.AddRange([action, cancel, uninstall]); AcceptButton = action; CancelButton = cancel;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         ResumeLayout(false); PerformLayout(); LayoutFooter();
-        Shown += (_, _) => LayoutFooter(); DpiChanged += (_, _) => BeginInvoke(LayoutFooter);
+        Shown += (_, _) => { LayoutFooter(); details.Select(0, 0); ActiveControl = action.Visible && action.Enabled ? action : cancel; };
+        DpiChanged += (_, _) => BeginInvoke(LayoutFooter);
     }
 
     private static void StyleButton(Button button, string label, bool primary)
@@ -80,19 +76,19 @@ internal sealed partial class InstallForm
         cancel.Location = new Point(Unit(32), ClientSize.Height - Unit(58));
         uninstall.Location = new Point(Unit(126), ClientSize.Height - Unit(58));
     }
-    private void UpdateDetails(string message) => details.Text = message;
-    internal void SetInstalledVersion(string? current)
+    private void UpdateDetails(string message) { details.Text = message; details.Select(0, 0); }
+    internal void SetInstalledVersion(string? current, bool installationTraces = false)
     {
-        if (current is null) return;
-        card.Controls["version"]!.Text = "当前 " + current + "  →  安装 " + InstallEngine.Version;
-        var upgrade = current != InstallEngine.Version;
+        if (current is null && !installationTraces) return;
+        if (current is not null) card.Controls["version"]!.Text = "当前 " + current + "  →  安装 " + InstallEngine.Version;
+        var upgrade = current is not null && current != InstallEngine.Version;
         action.Text = upgrade ? "升级安装" : "修复安装";
         uninstall.Visible = true;
         text.Text = upgrade ? "已有资产快读，可以升级到新版本。" : "已检测到资产快读，可以修复安装。";
     }
     private async Task UninstallAsync()
     {
-        if ((previewOnly && testOperations is null) || running is not null) return;
+        if ((previewOnly && testOperations is null) || running is not null || serviceStarting) return;
         if (testOperations is null && MessageBox.Show("卸载资产快读？\n读取结果和账户数据会保留。", "Soda Terminal · 资产快读",
             MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         running = new CancellationTokenSource(); action.Enabled = cancel.Enabled = uninstall.Enabled = false;
@@ -108,18 +104,12 @@ internal sealed partial class InstallForm
             }
             text.Text = "已卸载，读取结果和账户数据已保留。";
             UpdateDetails("资产快读的程序与入口已移除。读取结果和未知文件保留，可重新安装。");
-            installed = null; serviceStarted = false; uninstall.Visible = false; action.Text = "开始安装";
+            installed = null; serviceStarted = false; serviceStarting = false; uninstall.Visible = false; action.Text = "开始安装";
             card.Controls["version"]!.Text = "安装版本 " + InstallEngine.Version;
             progress.Value = 100;
         }
         catch (Exception error) { text.Text = "卸载未完成，请关闭资产快读后重试。"; UpdateDetails(error.Message); progress.Visible = false; }
         finally { progress.Indeterminate = false; running.Dispose(); running = null; action.Enabled = cancel.Enabled = uninstall.Enabled = true; }
-    }
-    internal void ToggleDetails()
-    {
-        details.Visible = !details.Visible; detailsLink.Text = details.Visible ? "收起详情" : "安装详情";
-        card.Height = Unit(details.Visible ? 284 : 180);
-        ClientSize = new Size(ClientSize.Width, Unit(details.Visible ? 388 : 284)); LayoutFooter();
     }
     private void ShowInstallError(string message)
     {
@@ -137,8 +127,12 @@ internal sealed partial class InstallForm
             case "initial": break;
             case "preparing": text.Text = "正在准备组件…"; progress.Visible = true; progress.Indeterminate = true; action.Visible = false; cancel.Text = "取消"; break;
             case "progress": text.Text = "正在安装资产快读…"; progress.Visible = true; progress.Value = 47; action.Visible = false; cancel.Text = "取消"; break;
-            case "completion": text.Text = "安装完成，打开工具后返回网页连接。"; progress.Visible = true; progress.Value = 100; action.Text = "打开工具"; break;
-            case "started": text.Text = "工具已打开，请返回网页连接。"; action.Text = "返回网页"; break;
+            case "starting": text.Text = "安装完成，正在启动连接服务…"; progress.Visible = true; progress.Value = 100; action.Visible = false; cancel.Text = "关闭"; cancel.Enabled = false; break;
+            case "completion":
+            case "started": text.Text = "安装完成，请返回网页连接。"; progress.Visible = true; progress.Value = 100; action.Text = "完成";
+                UpdateDetails("资产快读连接服务已启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。"); break;
+            case "start-error": text.Text = "安装完成，连接服务未启动，请重试启动。"; progress.Visible = true; progress.Value = 100; action.Text = "重试启动";
+                UpdateDetails("连接服务启动失败。请关闭已有资产快读后重试启动。\r\n读取结果和账户数据已保留，无需重新安装。"); break;
             case "cancelled": text.Text = "安装已取消，可以重新安装。"; action.Text = "重新安装"; break;
             case "error": ShowInstallError("synthetic_download_failure"); break;
             default: throw new InvalidOperationException("test_preview_state_invalid");

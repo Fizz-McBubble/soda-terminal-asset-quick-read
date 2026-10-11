@@ -10,10 +10,13 @@ RequestExecutionLevel user
 SilentInstall silent
 CRCCheck force
 ManifestDPIAware true
-VIProductVersion "1.0.4.0"
+!ifndef INSTALLER_VERSION
+  !error "INSTALLER_VERSION is required"
+!endif
+VIProductVersion "${INSTALLER_VERSION}.0"
 VIAddVersionKey "ProductName" "Soda Terminal · 资产快读"
 VIAddVersionKey "FileDescription" "资产快读独立安装程序"
-VIAddVersionKey "FileVersion" "1.0.4"
+VIAddVersionKey "FileVersion" "${INSTALLER_VERSION}"
 VIAddVersionKey "LegalCopyright" "Soda Terminal contributors; NSIS contributors"
 !include "FileFunc.nsh"
 Section

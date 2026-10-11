@@ -77,16 +77,20 @@ internal sealed class InstallRegistration : IRegistration
     }
     internal InstallRegistration(string root, UserRegistration protocol, IUninstallStore store, Func<Stream> stub, InstallerDiagnostics? diagnostics = null)
     { this.diagnostics = diagnostics; this.root = Path.GetFullPath(root); this.protocol = protocol; this.store = store; this.stub = stub; }
-    private static string? OldPin(string? version) => version switch
+    internal static IReadOnlyList<string> PublishedVersions { get; } = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6"];
+    internal static string? OldPin(string? version) => version switch
     {
         "1.0.1" => "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B",
         "1.0.2" => "20A3C4D98F79FBC3604ECC8759D914D5968C8B0F5222BCF4E334B328162F371C",
         "1.0.3" => "BC78BF0274F4A9CB7B99F2A6D4E672F96F1C8D71179DA73E05E3157B9002587A",
         "1.0.4" => "AA22B2FD4F585BF622DD080F6A00B817F49C2BFDFDA8D0D50CACE21C51E5871A",
+        "1.0.5" => "B611351FBDB5029DCABEC33006E2EDB86A77E3A338E4F026D4F8618B021E40E2",
+        // Locally delivered 1.0.6 must also upgrade without a manual uninstall.
+        "1.0.6" => "3DE0F301D4AC4E3784494823AA1B35CBC31A5BC9D7E4F90BF2C1106E7D03B1CF",
         _ => null
     };
     private string? RecoverableVersion(UninstallRecord? record, string? hash) => record is null && hash is not null
-        ? new[] { "1.0.1", "1.0.2", "1.0.3", "1.0.4" }.FirstOrDefault(version => hash == OldPin(version) && protocol.TrustedInstalledVersion(root, version))
+        ? PublishedVersions.FirstOrDefault(version => hash == OldPin(version) && protocol.RecoverableInstalledVersion(root, version))
         : null;
     private (UninstallRecord? Record, string? Hash) Inspect(string stage, string incomingHash)
     {
@@ -95,8 +99,8 @@ internal sealed class InstallRegistration : IRegistration
         var hash = File.Exists(path) ? InstallEngine.Digest(path) : null;
         var upgrading = record is { OwnedShape: true } && OldPin(record.Version) is not null && record == expected with { Version = record.Version };
         var recovering = RecoverableVersion(record, hash);
-        var knownPin = hash is null ? "absent" : hash == incomingHash ? "current" : new[] { "1.0.1", "1.0.2", "1.0.3", "1.0.4" }.FirstOrDefault(v => hash == OldPin(v)) ?? "unknown";
-        diagnostics?.Identity(stage, record is not null, record?.Version is "1.0.1" or "1.0.2" or "1.0.3" or "1.0.4" ? record.Version : record?.Version == InstallEngine.Version ? "current" : record is null ? "absent" : "unknown",
+        var knownPin = hash is null ? "absent" : hash == incomingHash ? "current" : PublishedVersions.FirstOrDefault(v => hash == OldPin(v)) ?? "unknown";
+        diagnostics?.Identity(stage, record is not null, record?.Version is not null && PublishedVersions.Contains(record.Version) ? record.Version : record?.Version == InstallEngine.Version ? "current" : record is null ? "absent" : "unknown",
             record?.OwnedShape == true, record == expected, upgrading || recovering is not null, hash is not null, knownPin, hash == incomingHash || upgrading && hash == OldPin(record?.Version) || recovering is not null,
             preflightDone && record != preflightRecord, preflightDone && hash != preflightHash);
         if (record is not null && record != expected && !upgrading) throw new IOException("uninstall_registration_conflict");
@@ -139,7 +143,8 @@ internal sealed class InstallRegistration : IRegistration
         if (File.Exists(path) && InstallEngine.Digest(path) != stubHash)
         {
             // Missing registry metadata is repairable only when the pinned stub,
-            // owned protocol and five published launch-runtime identities agree.
+            // five published launch-runtime identities agree, and the protocol
+            // is either owned by that version or absent.
             var oldHash = InstallEngine.Digest(path);
             var recovering = RecoverableVersion(previous, oldHash);
             var oldStubHash = OldPin(previous?.Version ?? recovering);
