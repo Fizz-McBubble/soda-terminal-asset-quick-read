@@ -12,7 +12,7 @@ if (-not (Test-Path -LiteralPath $DotNetPath)) { throw 'Installed .NET 8 SDK req
 if (-not $TemporaryDirectory) { $TemporaryDirectory = if ($env:SODA_BUILD_TEMP_DIRECTORY) { $env:SODA_BUILD_TEMP_DIRECTORY } else { Join-Path $derivedRoot 'temp\asset-quick-read-bridge' } }
 $TemporaryDirectory = [IO.Path]::GetFullPath($TemporaryDirectory)
 $buildEnvironmentBefore = @{}
-foreach ($name in @('TEMP', 'TMP', 'DOTNET_CLI_HOME', 'DOTNET_GENERATE_ASPNET_CERTIFICATE')) { $buildEnvironmentBefore[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+foreach ($name in @('TEMP', 'TMP', 'DOTNET_CLI_HOME', 'DOTNET_GENERATE_ASPNET_CERTIFICATE', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE')) { $buildEnvironmentBefore[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 try {
     New-Item -ItemType Directory -Path $TemporaryDirectory -Force | Out-Null
     $env:TEMP = $TemporaryDirectory

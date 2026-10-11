@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$DestinationDirectory)
+param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$DestinationDirectory, [string]$RuntimeDirectory)
 $ErrorActionPreference = 'Stop'
 $source = [IO.Path]::GetFullPath($BridgeOutputDirectory)
 $destination = [IO.Path]::GetFullPath($DestinationDirectory)
@@ -13,9 +13,13 @@ function Assert-NoLinks([string]$Path) {
 }
 Assert-NoLinks $source
 Assert-NoLinks $destination
-$runtime = Join-Path $PSScriptRoot 'runtime'
+$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
+$runtime = if ($RuntimeDirectory) { [IO.Path]::GetFullPath($RuntimeDirectory) } elseif ($env:SODA_ASSET_RUNTIME_DIRECTORY) { $env:SODA_ASSET_RUNTIME_DIRECTORY } else { Join-Path $derivedRoot 'asset-quick-read\runtime' }
+$securitySource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'bridge/Security.cs'))
+$runtimePin = [regex]::Match($securitySource, '\["soda-asset-capture\.exe"\]\s*=\s*"([A-F0-9]{64})"')
+if (-not $runtimePin.Success) { throw 'Reviewed Bridge runtime pin required.' }
 $pins = [ordered]@{
-    'soda-asset-capture.exe'='94E9D6ED79B4886D4E2A0B55A20CC79A2821228B158EE0BA6972526AF10E047B'
+    'soda-asset-capture.exe'=$runtimePin.Groups[1].Value
     'WinDivert.dll'='C1E060EE19444A259B2162F8AF0F3FE8C4428A1C6F694DCE20DE194AC8D7D9A2'
     'WinDivert64.sys'='8DA085332782708D8767BCACE5327A6EC7283C17CFB85E40B03CD2323A90DDC2'
     'assets\manifest.json'='38006E92317CF8EBA3E578D58E5B0FC9AECFEC117D20DC375AA9BED2B073302E'

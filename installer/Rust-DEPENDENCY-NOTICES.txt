@@ -1,5 +1,5 @@
 Soda Asset Quick Read - complete Rust dependency license and copyright notices
-Cargo.lock SHA256: 63FF64738859CD057751586751C14C43E5F5F9A012F2D2BC5B3065D52C2B791C
+Cargo.lock SHA256: 26EED84CD47593BDB0088EA51E806697763B572B8EBE9E765169D5C01CA143F8
 Target: x86_64-pc-windows-msvc; locked offline resolved graph, including build dependencies.
 Each registry archive is verified against its Cargo.lock checksum; original notice texts follow in full.
 

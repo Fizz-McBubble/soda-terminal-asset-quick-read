@@ -307,6 +307,7 @@ fn parse_agent_record(
     message: &Message,
     datamine: &Datamine,
     issues: &mut Vec<DecodeIssue>,
+    potential_field: Option<u32>,
 ) -> AgentRecord {
     let catalog_id = parse_scalar(
         message,
@@ -362,6 +363,17 @@ fn parse_agent_record(
         promotion,
         weapon_uid,
         mindscape,
+        // This optional field must never invalidate otherwise usable asset records.
+        // Invalid/omitted observations remain explicit for the consumer to handle.
+        potential_detail_id: potential_field.map(|number| {
+            parse_scalar(
+                message,
+                number,
+                &mut Vec::new(),
+                "agent",
+                "potential_detail_id",
+            )
+        }),
         skills,
         dressed_equips,
     }
@@ -372,6 +384,15 @@ pub fn parse_load_response(
     kind: AssetKind,
     message: &Message,
     datamine: &Datamine,
+) -> Result<LoadRecords, Vec<DecodeIssue>> {
+    parse_load_response_with_potential(kind, message, datamine, None)
+}
+
+pub(crate) fn parse_load_response_with_potential(
+    kind: AssetKind,
+    message: &Message,
+    datamine: &Datamine,
+    potential_field: Option<u32>,
 ) -> Result<LoadRecords, Vec<DecodeIssue>> {
     let mut issues = Vec::new();
 
@@ -405,7 +426,7 @@ pub fn parse_load_response(
                 &mut issues,
                 "agent",
                 "item",
-                |m, issues| parse_agent_record(m, datamine, issues),
+                |m, issues| parse_agent_record(m, datamine, issues, potential_field),
             );
             LoadRecords::Agents(agents)
         }

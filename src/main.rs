@@ -24,6 +24,18 @@ struct Cli {
 enum Command {
     /// Inspect pinned protocol support without opening WinDivert or observing traffic.
     Inspect,
+    /// Explicit selected-agent local diagnostic; never saves a full inventory or imports.
+    #[cfg(any())]
+    FieldSurvey {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long = "agent-id", required = true, value_delimiter = ',', num_args = 1..=3)]
+        agent_ids: Vec<u32>,
+        #[arg(long)]
+        client_resources: PathBuf,
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=180))]
+        seconds: u64,
+    },
     /// Inspect two approved static client fields; no requests, game, or driver.
     InspectClientDispatch {
         #[arg(long)]
@@ -84,6 +96,11 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli) -> Result<u8, String> {
+    #[cfg(any())]
+    if let Command::FieldSurvey { out, agent_ids, .. } = &cli.command {
+        soda_asset_capture::field_survey::validate_agent_ids(agent_ids)?;
+        soda_asset_capture::field_survey_run::validate_output(out)?;
+    }
     if let Command::InspectClientDispatch { input, out } = &cli.command {
         ensure_new_output(out)?;
         let mut output = fs::OpenOptions::new()
@@ -117,6 +134,23 @@ fn run(cli: Cli) -> Result<u8, String> {
     let assets = cli.assets.unwrap_or_else(|| directory.join("assets"));
     let data = load_protocol(&assets)?;
     let report = match cli.command {
+        #[cfg(any())]
+        Command::FieldSurvey {
+            out,
+            agent_ids,
+            client_resources,
+            seconds,
+        } => {
+            let report = soda_asset_capture::field_survey_run::capture_selected(
+                &data,
+                &directory,
+                &client_resources,
+                &agent_ids,
+                seconds,
+            )?;
+            write_report(&out, &report)?;
+            report
+        }
         Command::Inspect => {
             println!(
                 "{}",
@@ -277,11 +311,15 @@ fn run(cli: Cli) -> Result<u8, String> {
         "elapsedMs": report.source.elapsed_ms, "issues": report.issues,
         "cnSupport": "requires_game_count_and_field_review", "readyForAccountImport": false })
     );
-    Ok(if report.status == "staged_for_field_review" {
-        0
-    } else {
-        2
-    })
+    Ok(
+        if report.status == "staged_for_field_review"
+            || report.status == "field_survey_selected_records_observed"
+        {
+            0
+        } else {
+            2
+        },
+    )
 }
 
 fn ensure_new_output(path: &std::path::Path) -> Result<(), String> {

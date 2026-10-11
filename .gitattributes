@@ -1,3 +1,5 @@
 * text eol=lf
 installer/Rust-DEPENDENCY-NOTICES.txt -text
 installer/Rust-STDLIB-COPYRIGHT.html -text
+installer/soda-brand-icon.png -text
+installer/soda-brand-icon.ico -text

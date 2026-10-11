@@ -73,6 +73,8 @@ pub struct AgentRecord {
     pub promotion: ScalarObservation,
     pub weapon_uid: ScalarObservation,
     pub mindscape: ScalarObservation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub potential_detail_id: Option<ScalarObservation>,
     pub skills: Vec<SkillRecord>,
     pub dressed_equips: Vec<EquipRecord>,
 }

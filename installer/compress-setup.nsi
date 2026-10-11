@@ -3,16 +3,17 @@ Unicode true
 SetCompressor /SOLID lzma
 SetCompressorDictSize 128
 ReserveFile /plugin System.dll
-Name "Soda Terminal 资产快读"
+Name "Soda Terminal · 资产快读"
+Icon "soda-brand-icon.ico"
 OutFile "${OUTPUT_EXE}"
 RequestExecutionLevel user
 SilentInstall silent
 CRCCheck force
 ManifestDPIAware true
-VIProductVersion "1.0.0.0"
-VIAddVersionKey "ProductName" "Soda Terminal 资产快读"
+VIProductVersion "1.0.1.0"
+VIAddVersionKey "ProductName" "Soda Terminal · 资产快读"
 VIAddVersionKey "FileDescription" "资产快读独立安装程序"
-VIAddVersionKey "FileVersion" "1.0.0"
+VIAddVersionKey "FileVersion" "1.0.1"
 VIAddVersionKey "LegalCopyright" "Soda Terminal contributors; NSIS contributors"
 !include "FileFunc.nsh"
 Section
@@ -33,6 +34,9 @@ Section
   System::Free $1
   System::Free $2
   SetOutPath "$PLUGINSDIR\payload"
+  ClearErrors
+  File /oname=uninstaller.exe "${UNINSTALLER_EXE}"
+  IfErrors extract_failed
   ClearErrors
   File /oname=asset-quick-read.zip "${RUNTIME_ARCHIVE}"
   IfErrors extract_failed

@@ -1,0 +1,178 @@
+namespace Soda.AssetQuickRead.Setup;
+
+internal static class InstallerExperienceTests
+{
+    private sealed class ProtocolStore : IProtocolRegistrationStore
+    {
+        internal ProtocolRegistration? Value;
+        public ProtocolRegistration? Read() => Value;
+        public void Create(string command) => Value = new(UserRegistration.Description, "", command, true);
+        public bool Replace(ProtocolRegistration expected, string command) { if (Value != expected) return false; Value = expected with { Command = command }; return true; }
+        public void RemoveCreated(string command) { if (Value?.Command == command && Value.OwnedShape) Value = null; }
+    }
+    private sealed class UninstallStore : IUninstallStore
+    {
+        internal UninstallRecord? Value;
+        internal bool Fail;
+        public UninstallRecord? Read() => Value;
+        public void Write(UninstallRecord value) { Value = value; if (Fail) throw new IOException("synthetic_registration_failure"); }
+        public bool Remove(UninstallRecord value) { if (Value != value) return false; Value = null; return true; }
+    }
+    internal static int RunFullPackage(string install, string archive, Catalog catalog, string privatePayload)
+    {
+        var protocol = new ProtocolStore(); var store = new UninstallStore();
+        var shortcut = Path.Combine(install, "synthetic-start-menu", "asset-reader.url");
+        var registration = new UserRegistration(protocol, shortcut);
+        var legacyFixture = Environment.GetEnvironmentVariable("SODA_ASSET_QUICK_READ_LEGACY_FIXTURE");
+        var legacy = Path.Combine(install, "versions", "1.0.0");
+        if (legacyFixture != null)
+        {
+            foreach (var pin in AssetUninstall.Published100Catalog().Files)
+            {
+                var source = InstallEngine.Safe(legacyFixture, pin.Path);
+                if (!File.Exists(source)) source = InstallEngine.Safe(Path.GetFullPath(Path.Combine(legacyFixture, "..", "public-embedded-payload")), pin.Path);
+                if (new FileInfo(source).Length != pin.Size || InstallEngine.Digest(source) != pin.Sha256) throw new Exception("legacy_catalog_fixture_identity");
+                var target = InstallEngine.Safe(legacy, pin.Path); Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(source, target);
+            }
+            File.WriteAllText(Path.Combine(legacy, "user.txt"), "PRESERVE");
+            protocol.Value = new(UserRegistration.Description, "", UserRegistration.Command(Path.Combine(legacy, "Soda.AssetQuickRead.Bridge.exe")), true);
+        }
+        Func<Stream> stub = InstallRegistration.OpenUninstaller;
+        var entries = new InstallRegistration(install, registration, store, stub);
+        var version = InstallEngine.Install(archive, catalog, install, entries, CancellationToken.None, _ => { }, (pin, _) => File.OpenRead(InstallEngine.Safe(privatePayload, pin.Path)));
+        InstallEngine.Verify(version, catalog);
+        if (store.Value != InstallRegistration.Record(Path.GetFullPath(install))) throw new Exception("actual_package_uninstall_registration");
+        using var self = stub(); var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(self));
+        if (InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) != hash) throw new Exception("actual_package_uninstaller_identity");
+        Directory.CreateDirectory(Path.Combine(install, "jobs")); var keep = Path.Combine(install, "jobs", "preserve.json"); File.WriteAllText(keep, "SYNTHETIC_RESULT");
+        AssetUninstall.Remove(install, catalog, registration, store, hash);
+        if (protocol.Value != null || store.Value != null || File.Exists(shortcut) || File.Exists(Path.Combine(install, "uninstall.exe")) || catalog.Files.Any(pin => File.Exists(InstallEngine.Safe(version, pin.Path)))) throw new Exception("actual_package_uninstall_left_managed_files");
+        if (File.ReadAllText(keep) != "SYNTHETIC_RESULT") throw new Exception("actual_package_uninstall_result_changed");
+        if (legacyFixture != null && (AssetUninstall.Published100Catalog().Files.Any(pin => File.Exists(InstallEngine.Safe(legacy, pin.Path))) || File.ReadAllText(Path.Combine(legacy, "user.txt")) != "PRESERVE")) throw new Exception("legacy_package_uninstall_or_preservation");
+        return 5;
+    }
+    internal static int Run(string root, string archive, Catalog catalog)
+    {
+        var passed = 0;
+        void Check(bool value) { if (!value) throw new Exception("installer_experience_assertion"); passed++; }
+        var sample = System.Text.Encoding.UTF8.GetBytes("MZ synthetic uninstall program");
+        var stubHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sample));
+        foreach (var fail in new[] { false, true })
+        {
+            var install = Path.Combine(root, "experience-" + fail);
+            var protocol = new ProtocolStore(); var store = new UninstallStore { Fail = fail };
+            var shortcut = Path.Combine(root, "shortcut-" + fail, "quick-read.url");
+            var registration = new UserRegistration(protocol, shortcut);
+            var entries = new InstallRegistration(install, registration, store, () => new MemoryStream(sample));
+            Directory.CreateDirectory(Path.Combine(install, "jobs")); File.WriteAllText(Path.Combine(install, "jobs", "keep.json"), "PRESERVE");
+            if (fail)
+            {
+                try { InstallEngine.Install(archive, catalog, install, entries, CancellationToken.None, _ => { }); throw new Exception("failure_missing"); }
+                catch (IOException) { }
+                Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut));
+                Check(!File.Exists(Path.Combine(install, "uninstall.exe")) && !Directory.Exists(Path.Combine(install, "versions", catalog.Version)));
+            }
+            else
+            {
+                var installed = InstallEngine.Install(archive, catalog, install, entries, CancellationToken.None, _ => { });
+                Check(store.Value == InstallRegistration.Record(Path.GetFullPath(install)) && File.Exists(shortcut));
+                Check(InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) == stubHash);
+                var unknown = Path.Combine(installed, "user-file.txt"); File.WriteAllText(unknown, "PRESERVE");
+                var modified = InstallEngine.Safe(installed, catalog.Files[0].Path); File.AppendAllText(modified, "USER_EDIT");
+                AssetUninstall.Remove(install, catalog, registration, store, stubHash);
+                Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(install, "uninstall.exe")));
+                Check(File.Exists(modified) && File.ReadAllText(unknown) == "PRESERVE");
+                Check(!File.Exists(InstallEngine.Safe(installed, catalog.Files[1].Path)));
+                // Retry is idempotent and never consumes the user's modified file.
+                AssetUninstall.Remove(install, catalog, registration, store, stubHash); Check(File.Exists(modified));
+            }
+            Check(File.ReadAllText(Path.Combine(install, "jobs", "keep.json")) == "PRESERVE");
+        }
+        ApplicationConfiguration.Initialize();
+        passed += RunHandlers(root, archive, catalog, sample, stubHash);
+        var render = Path.Combine(root, "installer-ui"); Directory.CreateDirectory(render);
+        foreach (var scale in new[] { 1f, 1.25f, 1.5f })
+        foreach (var state in new[] { "initial", "preparing", "progress", "completion", "started", "cancelled", "error", "upgrade", "repair" })
+        {
+            using var form = new InstallForm(preview: true);
+            if (state is "upgrade" or "repair") form.SetInstalledVersion(state == "upgrade" ? "1.0.0" : "1.0.1");
+            else form.ApplyRenderFixture(state);
+            form.ShowInTaskbar = false; form.StartPosition = FormStartPosition.Manual;
+            form.Location = new Point(-32000, -32000); form.Opacity = 0; form.Show();
+            var ratio = scale / (form.DeviceDpi / 96f); form.Scale(new SizeF(ratio, ratio));
+            Application.DoEvents();
+            Save(""); form.ToggleDetails(); Application.DoEvents(); Save("-details");
+            var panel = form.Controls.OfType<Panel>().Single();
+            Check(panel.Bottom <= form.Controls.OfType<Button>().Min(button => button.Top));
+            Check(panel.Controls.OfType<TextBox>().Single().ReadOnly);
+            foreach (Control control in panel.Controls) Check(control.Right <= panel.Width && control.Bottom <= panel.Height);
+            if (state == "error") Check(!panel.Controls.OfType<Label>().Any(label => label.Text.Contains("synthetic")));
+            form.Close();
+            void Save(string suffix)
+            {
+                using var bitmap = new Bitmap(form.Width, form.Height);
+                form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                bitmap.Save(Path.Combine(render, state + "-" + (int)(scale * 100) + suffix + ".png"));
+            }
+        }
+        return passed;
+    }
+    private static int RunHandlers(string baseRoot, string archive, Catalog catalog, byte[] sample, string stubHash)
+    {
+        var passed = 0;
+        var root = Path.Combine(baseRoot, "button-handlers");
+        var protocol = new ProtocolStore(); var store = new UninstallStore { Fail = true };
+        var shortcut = Path.Combine(root, "start-menu", "quick-read.url");
+        var registration = new UserRegistration(protocol, shortcut);
+        var entries = new InstallRegistration(root, registration, store, () => new MemoryStream(sample));
+        var dispatches = new List<System.Diagnostics.ProcessStartInfo>();
+        var serviceAttempts = 0; var browserAttempts = 0;
+        var operations = new FormOperations(root,
+            (progress, token) => Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token),
+            start =>
+            {
+                dispatches.Add(start);
+                if (start.Arguments == "--serve" && ++serviceAttempts == 1) throw new IOException("synthetic_launch_failure");
+                if (start.FileName.StartsWith("https://") && ++browserAttempts == 1) throw new IOException("synthetic_browser_failure");
+                return Task.CompletedTask;
+            },
+            () => Task.Run(() => AssetUninstall.Remove(root, catalog, registration, store, stubHash)));
+        using (var form = new InstallForm(true, operations))
+        {
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "重试"));
+            Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut));
+            store.Fail = false; Button(form, "重试").PerformClick(); Pump(() => Has(form, "打开工具"));
+            Check(protocol.Value != null && store.Value != null && File.Exists(Path.Combine(root, "uninstall.exe")));
+            Button(form, "打开工具").PerformClick(); Pump(() => serviceAttempts == 1); Check(Has(form, "打开工具"));
+            Button(form, "打开工具").PerformClick(); Pump(() => Has(form, "返回网页"));
+            Check(dispatches.Take(2).All(start => start.FileName == Path.Combine(root, "versions", catalog.Version, "Soda.AssetQuickRead.Bridge.exe") && start.Arguments == "--serve" && start.WorkingDirectory == Path.GetDirectoryName(start.FileName)));
+            Button(form, "返回网页").PerformClick(); Pump(() => browserAttempts == 1); Check(!form.IsDisposed);
+            Button(form, "返回网页").PerformClick(); Pump(() => form.IsDisposed);
+            Check(dispatches.Last().FileName == "https://sodaterminal.com/system/scanner" && dispatches.Last().UseShellExecute);
+        }
+        using (var form = new InstallForm(true, operations))
+        {
+            form.SetInstalledVersion(registration.InstalledVersion(root)); Show(form);
+            Button(form, "修复安装").PerformClick(); Pump(() => Has(form, "打开工具"));
+            Check(File.Exists(Path.Combine(root, "uninstall.exe")));
+            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"));
+            Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(root, "uninstall.exe")));
+            Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
+        }
+        using (var form = new InstallForm(true, operations with { Install = async (_, token) => { await Task.Delay(Timeout.Infinite, token); return "unreachable"; } }))
+        {
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "取消"));
+            Button(form, "取消").PerformClick(); Pump(() => Has(form, "重新安装"));
+            Check(protocol.Value is null && store.Value is null);
+            Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
+        }
+        return passed;
+        void Check(bool condition) { if (!condition) throw new Exception("button_handler_assertion"); passed++; }
+    }
+    private static bool Has(Form form, string label) => form.Controls.OfType<Button>().Any(button => button.Text == label && button.Enabled);
+    private static Button Button(Form form, string label) => form.Controls.OfType<Button>().Single(button => button.Text == label);
+    private static void Show(Form form)
+    { form.ShowInTaskbar = false; form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-32000, -32000); form.Opacity = 0; form.Show(); }
+    private static void Pump(Func<bool> condition)
+    { var timeout = DateTime.UtcNow.AddSeconds(20); while (!condition()) { Application.DoEvents(); if (DateTime.UtcNow > timeout) throw new Exception("button_handler_timeout"); Thread.Sleep(5); } Application.DoEvents(); }
+}

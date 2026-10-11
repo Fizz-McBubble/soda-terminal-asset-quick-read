@@ -2,11 +2,17 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.0.0</Version>
+    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.0.1</Version>
+    <ApplicationIcon>soda-brand-icon.ico</ApplicationIcon><Product>Soda Terminal · 资产快读</Product>
+    <Description>Soda Terminal 资产快读安装程序</Description><FileVersion>1.0.1.0</FileVersion>
     <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained><RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup><EmbeddedResource Include="$(PayloadCatalog)" LogicalName="catalog.json" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="soda-brand-icon.png" LogicalName="soda-brand-icon.png" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="published-1.0.0-catalog.json" LogicalName="published-1.0.0-catalog.json" /></ItemGroup>
   <ItemGroup Condition="'$(EmbeddedPayload)' != ''"><EmbeddedResource Include="$(EmbeddedPayload)" LogicalName="payload.zip" /></ItemGroup>
+  <ItemGroup Condition="'$(UninstallStub)' != ''"><EmbeddedResource Include="$(UninstallStub)" LogicalName="uninstaller.exe" /></ItemGroup>
+  <ItemGroup Condition="'$(UninstallMetadata)' != ''"><EmbeddedResource Include="$(UninstallMetadata)" LogicalName="uninstall-payload.json" /></ItemGroup>
 </Project>

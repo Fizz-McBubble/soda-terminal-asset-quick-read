@@ -1,6 +1,15 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests)
+param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory)
 $ErrorActionPreference='Stop'
+$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
+if (-not $TemporaryDirectory) { $TemporaryDirectory = if ($env:SODA_BUILD_TEMP_DIRECTORY) { $env:SODA_BUILD_TEMP_DIRECTORY } else { Join-Path $derivedRoot 'temp\asset-quick-read-installer' } }
+$buildEnvironmentBefore = @{}
+foreach ($name in @('TEMP', 'TMP', 'DOTNET_CLI_HOME', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE')) { $buildEnvironmentBefore[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+try {
+New-Item -ItemType Directory -Path $TemporaryDirectory -Force | Out-Null
+$env:TEMP = $TemporaryDirectory
+$env:TMP = $TemporaryDirectory
+if (-not $env:DOTNET_CLI_HOME) { $env:DOTNET_CLI_HOME = Join-Path $derivedRoot 'dotnet\cli-home' }
 $output=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath $output){throw 'Output must be new; existing evidence is never overwritten.'}
 $pin=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer/nsis-toolchain.json') -Raw | ConvertFrom-Json
@@ -10,7 +19,7 @@ $env:DOTNET_ROOT=$sdk; # Standard SDK package cache.
  $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'
 New-Item -ItemType Directory -Path $output | Out-Null
 $privatePackage=Join-Path $output 'private-complete-package'
-& (Join-Path $PSScriptRoot 'Package-AssetQuickRead.ps1') -BridgeOutputDirectory $BridgeOutputDirectory -DestinationDirectory $privatePackage
+& (Join-Path $PSScriptRoot 'Package-AssetQuickRead.ps1') -BridgeOutputDirectory $BridgeOutputDirectory -DestinationDirectory $privatePackage -RuntimeDirectory $RuntimeDirectory
 $payloadRoot=Join-Path $output 'public-embedded-payload'; [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
 $remote=@('runtime/assets/manifest.json','runtime/assets/datamine.json','runtime/assets/nap.json')
 foreach($file in Get-ChildItem -LiteralPath $privatePackage -File -Recurse){
@@ -57,19 +66,34 @@ try{foreach($file in Get-ChildItem -LiteralPath $payloadRoot -File -Recurse){
 }}finally{$zip.Dispose()}
 $catalogFiles=@(foreach($file in Get-ChildItem -LiteralPath $payloadRoot -File -Recurse){[ordered]@{path=[IO.Path]::GetRelativePath($payloadRoot,$file.FullName).Replace('\','/');size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName).Hash;download=$false}})
 $catalogFiles+=@(foreach($relative in $remote){$file=Get-Item -LiteralPath (Join-Path $privatePackage $relative); [ordered]@{path=$relative;size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName).Hash;download=$true}})
-$catalog=[ordered]@{version='1.0.0';archiveSha256=(Get-FileHash -LiteralPath $archive).Hash;files=$catalogFiles}
+$projectXml=[xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -Raw)
+$version=[string]$projectXml.Project.PropertyGroup.Version
+$catalog=[ordered]@{version=$version;archiveSha256=(Get-FileHash -LiteralPath $archive).Hash;files=$catalogFiles}
 $catalogPath=Join-Path $output 'catalog.json'; [IO.File]::WriteAllText($catalogPath,($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
 $embedded=if($NsisPath){''}else{$archive}
-& $DotNetPath publish (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -c Release -r win-x64 --self-contained true "-p:PayloadCatalog=$catalogPath" "-p:EmbeddedPayload=$embedded" "-p:BaseIntermediateOutputPath=$(Join-Path $output 'intermediate/')" "-p:BaseOutputPath=$(Join-Path $output 'bin/')" '-p:RuntimeFrameworkVersion=8.0.29' --output (Join-Path $output 'setup')
+& $DotNetPath publish (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -c Release -r win-x64 --self-contained true "-p:PayloadCatalog=$catalogPath" '-p:EmbeddedPayload=' '-p:UninstallStub=' "-p:BaseIntermediateOutputPath=$(Join-Path $output 'uninstall-intermediate/')" "-p:BaseOutputPath=$(Join-Path $output 'uninstall-bin/')" '-p:RuntimeFrameworkVersion=8.0.29' --output (Join-Path $output 'uninstall')
+if($LASTEXITCODE -ne 0){throw 'Uninstaller offline publish failed.'}
+$uninstallStub=Join-Path $output 'uninstall/Soda.AssetQuickRead.Setup.exe'
+$stubResource=if($NsisPath){''}else{$uninstallStub}
+$uninstallMetadata=Join-Path $output 'uninstall-payload.json'
+[IO.File]::WriteAllText($uninstallMetadata,([ordered]@{size=(Get-Item -LiteralPath $uninstallStub).Length;sha256=(Get-FileHash -LiteralPath $uninstallStub).Hash}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+& $DotNetPath publish (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -c Release -r win-x64 --self-contained true --configfile (Join-Path $PSScriptRoot 'bridge/NuGet.Config') "-p:PayloadCatalog=$catalogPath" "-p:EmbeddedPayload=$embedded" "-p:UninstallStub=$stubResource" "-p:UninstallMetadata=$uninstallMetadata" "-p:BaseIntermediateOutputPath=$(Join-Path $output 'intermediate/')" "-p:BaseOutputPath=$(Join-Path $output 'bin/')" '-p:RuntimeFrameworkVersion=8.0.29' --output (Join-Path $output 'setup')
 if($LASTEXITCODE -ne 0){throw 'Installer offline publish failed.'}
-$inner=Join-Path $output 'setup/Soda.AssetQuickRead.Setup.exe'; $final=Join-Path $output 'Soda-Asset-Quick-Read-Setup-1.0.0.exe'
+$inner=Join-Path $output 'setup/Soda.AssetQuickRead.Setup.exe'; $final=Join-Path $output "SodaTerminal-AssetReader-Setup-$version.exe"
 if($RunTests){
+    if($NsisPath){[IO.File]::Copy($uninstallStub,(Join-Path $payloadDirectory 'uninstaller.exe'),$false); [IO.File]::WriteAllText((Join-Path $payloadDirectory 'ready'),'SODA-ASSET-QUICK-READ-PAYLOAD-1')}
     $reportPath=Join-Path $output 'installer-tests.json'
     $testProcess=Start-Process -FilePath $inner -ArgumentList @('--self-test', ('"'+$reportPath+'"')) -PassThru -Wait -WindowStyle Hidden
     if($testProcess.ExitCode -ne 0){throw 'Installer synthetic tests failed.'}
 }
 if($NsisPath){
-    & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
+    & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" "/DUNINSTALLER_EXE=$uninstallStub" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
     if($LASTEXITCODE -ne 0){throw 'Compressed installer build failed.'}
 }else{[IO.File]::Copy($inner,$final,$false)}
 [ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;installProtocolDownloads=3;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
+
+} finally {
+    foreach ($name in $buildEnvironmentBefore.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $buildEnvironmentBefore[$name], 'Process')
+    }
+}

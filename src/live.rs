@@ -54,6 +54,12 @@ pub fn capture(
     });
     eprintln!("status:waiting_for_normal_game_login");
     let mut selected = None;
+    #[cfg(any())]
+    let survey_mode = pipelines
+        .iter()
+        .any(|pipeline| pipeline.state.field_survey.is_some());
+    #[cfg(any())]
+    let mut survey_ready_reported = false;
     let mut buffer = vec![0u8; 65535];
     let mut reason = "capture_ended_before_all_loads";
     let mut receive_error_code = None;
@@ -93,6 +99,20 @@ pub fn capture(
                 reason = "load_responses_observed";
                 break;
             }
+            #[cfg(any())]
+            if survey_mode
+                && !survey_ready_reported
+                && selected.is_some_and(|index| {
+                    pipelines[index]
+                        .state
+                        .field_survey
+                        .as_ref()
+                        .is_some_and(|survey| survey.all_selected_observed())
+                })
+            {
+                eprintln!("status:selected_agent_records_observed_survey_continues");
+                survey_ready_reported = true;
+            }
         }
         Ok::<(), String>(())
     })();
@@ -128,6 +148,10 @@ pub fn capture(
         reason = "cancelled";
     } else if timed_out.load(Ordering::Acquire) {
         reason = "timed_out";
+        #[cfg(any())]
+        if survey_mode {
+            reason = "survey_window_elapsed";
+        }
     }
     Ok(finalize(pipelines, selected, context, reason))
 }

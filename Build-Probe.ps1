@@ -4,7 +4,9 @@ param(
     [switch]$Offline,
     [string]$RustProfile = '',
     [string]$TargetDirectory,
-    [string]$TemporaryDirectory
+    [string]$TemporaryDirectory,
+    [string]$RuntimeDirectory,
+    [string]$DownloadDirectory
 )
 $ErrorActionPreference = 'Stop'
 $derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
@@ -38,7 +40,7 @@ try {
     }
     & $cargoExecutable build --release --locked @cargoMode --manifest-path (Join-Path $PSScriptRoot 'Cargo.toml')
     if ($LASTEXITCODE -ne 0) { throw 'Probe build failed; no runtime was packaged.' }
-    $runtimeDirectory = Join-Path $PSScriptRoot 'runtime'
+    $runtimeDirectory = if ($RuntimeDirectory) { [IO.Path]::GetFullPath($RuntimeDirectory) } elseif ($env:SODA_ASSET_RUNTIME_DIRECTORY) { $env:SODA_ASSET_RUNTIME_DIRECTORY } else { Join-Path $derivedRoot 'asset-quick-read\runtime' }
     New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR 'release\soda-asset-capture.exe') -Destination $runtimeDirectory
     $protocolDirectory = Join-Path $runtimeDirectory 'assets'
@@ -49,7 +51,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.upstream\LICENSE') -Destination (Join-Path $runtimeDirectory 'UPSTREAM-LICENSE.txt')
     $driverPin = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'driver-source.json') -Raw | ConvertFrom-Json
     $driverHashes = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'driver-files.sha256.json') -Raw | ConvertFrom-Json
-    $downloadDirectory = Join-Path $PSScriptRoot 'downloads'
+    $downloadDirectory = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } else { Join-Path $derivedRoot 'asset-quick-read\downloads' }
     New-Item -ItemType Directory -Path $downloadDirectory -Force | Out-Null
     $archive = Join-Path $downloadDirectory 'WinDivert-2.2.2-A.zip'
     if (-not (Test-Path -LiteralPath $archive)) {

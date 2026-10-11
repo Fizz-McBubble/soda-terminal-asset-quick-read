@@ -1,6 +1,6 @@
 use crate::{
-    handshake::observe_token_body, observations::parse_load_response, response::observe_response,
-    snapshot::SnapshotState, types::AssetKind,
+    handshake::observe_token_body, observations::parse_load_response_with_potential,
+    response::observe_response, snapshot::SnapshotState, types::AssetKind,
 };
 use zzz_crypto::xorpad::XorPad;
 use zzz_gamedata::GameData;
@@ -16,6 +16,7 @@ pub struct Pipeline<'a> {
     kcp: Kcp,
     decoder: Decoder<'a>,
     data: &'a GameData,
+    potential_field: Option<u32>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -30,11 +31,18 @@ impl<'a> Pipeline<'a> {
                 &data.nap,
             ),
             data,
+            potential_field: crate::potential::verified_potential_field(data),
         }
     }
 
     pub fn handshake_complete(&self) -> bool {
         self.decoder.session().pad_ready()
+    }
+
+    #[cfg(any())]
+    pub fn enable_field_survey(&mut self, ids: &[u32]) -> Result<(), String> {
+        self.state.field_survey = Some(crate::field_survey::FieldSurvey::new(self.data, ids)?);
+        Ok(())
     }
 
     pub fn feed(&mut self, bytes: &[u8], direction: Direction, unix_seconds: i64) {
@@ -87,7 +95,9 @@ impl<'a> Pipeline<'a> {
             // trailing bytes. Preserve that contract, without guessing a footer's
             // meaning or permitting a short declared body.
             let message = &message[..declared_end];
-            let was_ready = self.handshake_complete();
+            let was_ready = self.decoder.session().pad_ready();
+            // Session establishment follows the production decoder for both directions.
+            // Retention below remains limited to selected incoming agent records.
             let mut events = self.decoder.feed(message, unix_seconds);
             for event in &events {
                 let handshake = &mut self.state.counters.handshake;
@@ -107,7 +117,7 @@ impl<'a> Pipeline<'a> {
             // The pinned decoder computes plaintext before installing the new session pad.
             // Decode that exact first frame again with the installed pad, without feeding KCP
             // twice or exporting the handshake. This keeps its first real response intact.
-            if !was_ready && self.handshake_complete() {
+            if !was_ready && self.decoder.session().pad_ready() {
                 events = self.decoder.feed(message, unix_seconds);
             }
             // The upstream decoder skips empty protobuf bodies. A zero-item load
@@ -138,7 +148,13 @@ impl<'a> Pipeline<'a> {
                         ..
                     } => {
                         self.state.counters.decoded_messages += 1;
-                        self.accept_message(command_id, &message);
+                        #[cfg(any())]
+                        if self.state.field_survey.is_some() && direction != Direction::Incoming {
+                            continue;
+                        }
+                        {
+                            self.accept_message(command_id, &message);
+                        }
                     }
                     DecodeEvent::ProtoFailed { .. } if self.handshake_complete() => {
                         self.state.counters.decode_failures_after_handshake += 1;
@@ -152,6 +168,12 @@ impl<'a> Pipeline<'a> {
 
     pub fn accept_message(&mut self, command_id: u16, message: &Message) {
         let mine = &self.data.datamine;
+        #[cfg(any())]
+        if self.state.field_survey.is_some()
+            && u32::from(command_id) != mine.cmd_get_avatar_data_sc_rsp
+        {
+            return;
+        }
         let kind = if u32::from(command_id) == mine.cmd_get_equip_data_sc_rsp {
             AssetKind::Discs
         } else if u32::from(command_id) == mine.cmd_get_weapon_data_sc_rsp {
@@ -183,8 +205,18 @@ impl<'a> Pipeline<'a> {
         if !allowed {
             return;
         }
+        #[cfg(any())]
+        if let Some(survey) = &mut self.state.field_survey {
+            if !survey.valid_anchor(command_id, message, self.data) {
+                return;
+            }
+            survey.session_anchor_verified = true;
+            survey.observe(message, self.data);
+            // Diagnostic mode never materializes a full inventory, even in memory.
+            return;
+        }
         // We deliberately never call upstream Inventory::apply or its deletion fallback.
-        match parse_load_response(kind, message, mine) {
+        match parse_load_response_with_potential(kind, message, mine, self.potential_field) {
             Ok(records) => self.state.accept(records),
             Err(issues) => {
                 for issue in issues {

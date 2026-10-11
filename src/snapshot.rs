@@ -134,6 +134,9 @@ pub struct Report {
     pub response_observations: Vec<ResponseObservation>,
     pub seed_diagnostics: Vec<SeedDiagnostics>,
     pub public_metadata: Option<crate::cn_dispatch::MetadataReceipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg(any())]
+    pub field_survey: Option<crate::field_survey::FieldSurvey>,
     pub issues: Vec<DecodeIssue>,
     pub assets: Assets,
     // Receiving a load response is not independent proof of its total or scope.
@@ -152,6 +155,8 @@ pub struct SnapshotState {
     pub counters: Counters,
     pub issues: Vec<DecodeIssue>,
     pub response_observations: Vec<ResponseObservation>,
+    #[cfg(any())]
+    pub field_survey: Option<crate::field_survey::FieldSurvey>,
 }
 
 impl SnapshotState {
@@ -245,6 +250,8 @@ impl SnapshotState {
             response_observations: self.response_observations,
             seed_diagnostics: Vec::new(),
             public_metadata: None,
+            #[cfg(any())]
+            field_survey: self.field_survey,
             issues: self.issues,
             assets: self.assets,
             independent_inventory_total_verified: false,
@@ -254,5 +261,61 @@ impl SnapshotState {
             raw_traffic_saved: false,
             response_status_semantics_verified: false,
         }
+    }
+}
+
+impl Report {
+    #[cfg(any())]
+    pub fn redact_for_field_survey(&mut self) {
+        self.schema = "soda-selected-agent-field-validation/v1";
+        self.status = if self.stop_reason == "capture_failed" {
+            "field_survey_capture_failed"
+        } else if !self
+            .field_survey
+            .as_ref()
+            .is_some_and(|survey| survey.session_anchor_verified)
+        {
+            "field_survey_session_unverified"
+        } else if self
+            .field_survey
+            .as_ref()
+            .is_some_and(|survey| survey.all_selected_observed())
+        {
+            if !self.issues.is_empty() {
+                "field_survey_selected_records_observed_with_issues"
+            } else if self
+                .field_survey
+                .as_ref()
+                .is_some_and(|survey| survey.limits_reached)
+            {
+                "field_survey_selected_records_observed_with_limits"
+            } else {
+                "field_survey_selected_records_observed"
+            }
+        } else {
+            "field_survey_selected_records_missing"
+        }
+        .into();
+        self.counts = Counts {
+            discs: 0,
+            s_discs: 0,
+            a_discs: 0,
+            b_discs: 0,
+            unknown_rarity_discs: 0,
+            engines: 0,
+            agents: self.field_survey.as_ref().map_or(0, |survey| {
+                survey
+                    .selected_agents
+                    .iter()
+                    .filter(|agent| agent.current_facts.is_some())
+                    .count()
+            }),
+        };
+        self.assets = Assets::default();
+        self.account_write_enabled = false;
+        self.ready_for_account_import = false;
+        self.full_inventory_verified = false;
+        self.independent_inventory_total_verified = false;
+        self.response_status_semantics_verified = false;
     }
 }
