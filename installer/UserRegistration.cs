@@ -38,7 +38,7 @@ internal sealed class UserRegistration : IRegistration
     {
         var existing = store.Read();
         if (existing?.Description != Description || existing.UrlProtocol != "" || !existing.OwnedShape) return null;
-        foreach (var version in new[] { InstallEngine.Version, "1.0.0" })
+        foreach (var version in new[] { InstallEngine.Version, "1.0.1", "1.0.0" })
             if (existing.Command == Command(Path.Combine(root, "versions", version, "Soda.AssetQuickRead.Bridge.exe"))) return version;
         return null;
     }
@@ -56,11 +56,14 @@ internal sealed class UserRegistration : IRegistration
         var versions = version is null ? null : Path.GetDirectoryName(version);
         if (version is null || versions is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" ||
             Path.GetFileName(version) != InstallEngine.Version || Path.GetFileName(versions) != "versions") return false;
-        var previous = Path.Combine(versions, "1.0.0");
+        var oldVersion = existing.Command == Command(Path.Combine(versions, "1.0.1", "Soda.AssetQuickRead.Bridge.exe")) ? "1.0.1" : "1.0.0";
+        var previous = Path.Combine(versions, oldVersion);
         if (existing.Command != Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe"))) return false;
         try
         {
-            foreach (var pin in Published100Pins)
+            var pins = oldVersion == "1.0.0" ? Published100Pins : AssetUninstall.Published101Catalog().Files
+                .Where(file => Published100Pins.ContainsKey(file.Path)).ToDictionary(file => file.Path, file => file.Sha256);
+            foreach (var pin in pins)
             {
                 var file = InstallEngine.Safe(previous, pin.Key);
                 if (!File.Exists(file) || digest(file) != pin.Value) return false;

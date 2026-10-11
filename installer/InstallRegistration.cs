@@ -45,6 +45,7 @@ internal sealed class InstallRegistration : IRegistration
     private readonly Func<Stream> stub;
     private UninstallRecord? previous, applied;
     private bool fileCreated;
+    private byte[]? replacedStub;
     private string? stubHash;
     internal static UninstallRecord Record(string root) => new(root, "\"" + Path.Combine(root, "uninstall.exe") + "\" --uninstall", InstallEngine.Version);
     internal InstallRegistration(string root) : this(root, new UserRegistration(), new RegistryUninstallStore(),
@@ -77,15 +78,28 @@ internal sealed class InstallRegistration : IRegistration
         var path = InstallEngine.Safe(root, "uninstall.exe");
         previous = store.Read();
         applied = Record(root);
-        if (previous is not null && previous != applied) throw new IOException("uninstall_registration_conflict");
+        var upgrading101 = previous is { OwnedShape: true, Version: "1.0.1" } && previous == applied with { Version = "1.0.1" };
+        if (previous is not null && previous != applied && !upgrading101) throw new IOException("uninstall_registration_conflict");
         using var source = stub(); using var bytes = new MemoryStream(); source.CopyTo(bytes);
         stubHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes.ToArray()));
-        if (File.Exists(path) && InstallEngine.Digest(path) != stubHash) throw new IOException("uninstaller_file_conflict");
+        if (File.Exists(path) && InstallEngine.Digest(path) != stubHash)
+        {
+            // Identity of the uninstaller shipped in the actual 1.0.1 release.
+            if (!upgrading101 || InstallEngine.Digest(path) != "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B")
+                throw new IOException("uninstaller_file_conflict");
+            replacedStub = File.ReadAllBytes(path);
+        }
         protocol.Apply(executable);
         if (!File.Exists(path))
         {
             using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write);
             fileCreated = true; bytes.Position = 0; bytes.CopyTo(output);
+        }
+        else if (replacedStub is not null)
+        {
+            if (InstallEngine.Digest(path) != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(replacedStub)))
+                throw new IOException("uninstaller_file_changed");
+            ReplaceStub(path, bytes.ToArray());
         }
         if (store.Read() != previous) throw new IOException("uninstall_registration_changed");
         store.Write(applied);
@@ -96,6 +110,20 @@ internal sealed class InstallRegistration : IRegistration
         { if (previous is null) store.Remove(applied); else store.Write(previous); }
         var path = InstallEngine.Safe(root, "uninstall.exe");
         if (fileCreated && File.Exists(path) && InstallEngine.Digest(path) == stubHash) File.Delete(path);
+        if (replacedStub is not null && File.Exists(path) && InstallEngine.Digest(path) == stubHash) ReplaceStub(path, replacedStub);
+        replacedStub = null;
         protocol.Rollback(); fileCreated = false;
+    }
+    private static void ReplaceStub(string path, byte[] bytes)
+    {
+        var temporary = path + ".upgrade-" + Guid.NewGuid().ToString("N");
+        InstallEngine.NoLinks(temporary);
+        try
+        {
+            using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) output.Write(bytes);
+            InstallEngine.NoLinks(path);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally { if (File.Exists(temporary)) { InstallEngine.NoLinks(temporary); File.Delete(temporary); } }
     }
 }

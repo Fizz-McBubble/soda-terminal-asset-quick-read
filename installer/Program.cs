@@ -7,6 +7,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         if (args.Length == 2 && args[0] == "--self-test") return Tests.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--upgrade-self-test") return UpgradeIdentityTests.Run(args[1], args[2]);
         if (args.Length > 0 && args[0] == "--uninstall") return AssetUninstall.Run(args);
         if (args.Length != 0) return 64;
         ApplicationConfiguration.Initialize(); Application.Run(new InstallForm()); return 0;

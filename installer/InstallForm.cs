@@ -28,9 +28,9 @@ internal sealed partial class InstallForm
             var image = new Bitmap(brandStream);
             card.Controls.Add(new PictureBox { Location = new Point(0, 0), Size = new Size(44, 44),
                 Image = image, SizeMode = PictureBoxSizeMode.Zoom, AccessibleName = "Soda Terminal" });
-            using var iconBitmap = new Bitmap(image, new Size(32, 32)); var handle = iconBitmap.GetHicon();
-            try { Icon = (Icon)Icon.FromHandle(handle).Clone(); } finally { DestroyIcon(handle); }
         }
+        using var iconStream = typeof(InstallForm).Assembly.GetManifestResourceStream("soda-brand-icon.ico");
+        if (iconStream is not null) Icon = new Icon(iconStream);
         card.Controls.Add(new Label { Location = new Point(58, 0), Size = new Size(398, 30),
             Text = "资产快读", Font = new Font("Microsoft YaHei UI", 17f, FontStyle.Bold), ForeColor = Color.FromArgb(34, 30, 43) });
         card.Controls.Add(new Label { Location = new Point(59, 32), Size = new Size(395, 22),
@@ -145,9 +145,6 @@ internal sealed partial class InstallForm
             default: throw new InvalidOperationException("test_preview_state_invalid");
         }
     }
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr handle);
-
     private sealed class SodaProgressBar : ProgressBar
     {
         private readonly System.Windows.Forms.Timer animation = new() { Interval = 40 };
