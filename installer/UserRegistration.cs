@@ -38,7 +38,7 @@ internal sealed class UserRegistration : IRegistration
     {
         var existing = store.Read();
         if (existing?.Description != Description || existing.UrlProtocol != "" || !existing.OwnedShape) return null;
-        foreach (var version in new[] { InstallEngine.Version, "1.0.2", "1.0.1", "1.0.0" })
+        foreach (var version in new[] { InstallEngine.Version, "1.0.3", "1.0.2", "1.0.1", "1.0.0" })
             if (existing.Command == Command(Path.Combine(root, "versions", version, "Soda.AssetQuickRead.Bridge.exe"))) return version;
         return null;
     }
@@ -56,14 +56,14 @@ internal sealed class UserRegistration : IRegistration
         var versions = version is null ? null : Path.GetDirectoryName(version);
         if (version is null || versions is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" ||
             Path.GetFileName(version) != InstallEngine.Version || Path.GetFileName(versions) != "versions") return false;
-        var oldVersion = new[] { "1.0.2", "1.0.1", "1.0.0" }.FirstOrDefault(candidate =>
+        var oldVersion = new[] { "1.0.3", "1.0.2", "1.0.1", "1.0.0" }.FirstOrDefault(candidate =>
             existing.Command == Command(Path.Combine(versions, candidate, "Soda.AssetQuickRead.Bridge.exe")));
         if (oldVersion is null) return false;
         var previous = Path.Combine(versions, oldVersion);
         if (existing.Command != Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe"))) return false;
         try
         {
-            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
+            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion == "1.0.3" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
                 .Where(file => Published100Pins.ContainsKey(file.Path)).ToDictionary(file => file.Path, file => file.Sha256);
             foreach (var pin in pins)
             {
@@ -74,6 +74,13 @@ internal sealed class UserRegistration : IRegistration
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
+    }
+    public void Preflight(string executable)
+    {
+        InstallEngine.NoLinks(executable); InstallEngine.NoLinks(shortcut);
+        var existing = store.Read();
+        if (existing is not null && existing != new ProtocolRegistration(Description, "", Command(executable), true) && !Published100Upgrade(executable, existing)) throw new IOException("protocol_registration_conflict");
+        if (File.Exists(shortcut) && File.ReadAllText(shortcut) != ShortcutBody) throw new IOException("start_menu_shortcut_conflict");
     }
     public void Apply(string executable)
     {

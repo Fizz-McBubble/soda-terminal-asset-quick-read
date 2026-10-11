@@ -25,6 +25,24 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         : code.Contains("registration") || code.Contains("shortcut_conflict") || code.Contains("uninstaller_file_conflict") ? "现有安装入口不匹配，请查看详情；已有版本已保留。"
         : code == "installer_access_denied" ? "安装目录访问被拒绝，请检查权限或安全软件提示。"
         : "安装未完成，请查看安装详情后重试。";
+    internal void Identity(string stage, bool registrationExists, string previousVersion, bool ownedShape, bool sameVersion, bool upgrading, bool stubExists, string knownPin, bool expectedMatch, bool registrySnapshotChanged, bool stubSnapshotChanged)
+    {
+        lock (gate)
+        {
+            if (events.Count < 80) events.Add(new { phase = "registration_identity", stage, registrationExists, previousVersion, ownedShape, sameVersion, upgrading, stubExists, knownPin, expectedMatch, registrySnapshotChanged, stubSnapshotChanged, elapsedMs = clock.ElapsedMilliseconds });
+            Persist();
+        }
+    }
+    private void Persist()
+    {
+        try
+        {
+            InstallEngine.NoLinks(directory); Directory.CreateDirectory(directory);
+            var path = Path.Combine(directory, "latest.json"); InstallEngine.NoLinks(path);
+            File.WriteAllText(path, JsonSerializer.Serialize(new { schema = "soda-asset-installer-diagnostic/v1", version = InstallEngine.Version, writtenUtc = DateTime.UtcNow, events }));
+        }
+        catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
     internal void Record(string phase, string code = "started", int? item = null, string? source = null)
     {
         if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "complete" or "failed" or "cancelled")) return;
@@ -34,13 +52,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         lock (gate)
         {
             if (events.Count < 80) events.Add(new { phase, code, item, source, elapsedMs = clock.ElapsedMilliseconds });
-            try
-            {
-                InstallEngine.NoLinks(directory); Directory.CreateDirectory(directory);
-                var path = Path.Combine(directory, "latest.json"); InstallEngine.NoLinks(path);
-                File.WriteAllText(path, JsonSerializer.Serialize(new { schema = "soda-asset-installer-diagnostic/v1", version = InstallEngine.Version, events }));
-            }
-            catch (IOException) { } catch (UnauthorizedAccessException) { }
+            Persist();
         }
     }
 }

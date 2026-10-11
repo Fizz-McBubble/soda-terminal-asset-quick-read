@@ -5,11 +5,11 @@ namespace Soda.AssetQuickRead.Setup;
 
 internal sealed record CatalogFile(string Path, long Size, string Sha256, bool Download = false);
 internal sealed record Catalog(string Version, string ArchiveSha256, CatalogFile[] Files);
-internal interface IRegistration { void Apply(string executable); void Rollback(); }
+internal interface IRegistration { void Preflight(string executable) { } void Apply(string executable); void Rollback(); }
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.0.3";
+    internal const string Version = "1.0.4";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)
@@ -48,6 +48,7 @@ internal static class InstallEngine
     {
         if (catalog.Version != Version || catalog.Files.Length == 0 || catalog.Files.Select(x => x.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != catalog.Files.Length) throw new IOException("catalog_identity_rejected");
         NoLinks(archive); NoLinks(root);
+        registration.Preflight(Path.Combine(root, "versions", Version, "Soda.AssetQuickRead.Bridge.exe"));
         diagnostics?.Record("payload_verify");
         if (Digest(archive) != catalog.ArchiveSha256) throw new IOException("payload_hash_mismatch");
         var versions = Path.Combine(root, "versions"); var final = Path.Combine(versions, Version);
@@ -126,7 +127,7 @@ internal static class InstallEngine
     {
         // Only the three fixed protocol identities may be borrowed; old versions are read-only.
         ProtocolDownload.Url(pin);
-        foreach (var version in new[] { "1.0.2", "1.0.1", "1.0.0" })
+        foreach (var version in new[] { "1.0.3", "1.0.2", "1.0.1", "1.0.0" })
         {
             try
             {

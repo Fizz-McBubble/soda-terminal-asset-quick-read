@@ -19,6 +19,11 @@ internal static class AssetUninstall
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.0.2-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
+    internal static Catalog Published103Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.0.3-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
     internal static int Run(string[] args)
     {
         var relocated = args.Length == 3 && args[1] == "--wait-pid" && int.TryParse(args[2], out _);

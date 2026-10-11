@@ -44,12 +44,16 @@ internal sealed class InstallRegistration : IRegistration
     private readonly IUninstallStore store;
     private readonly Func<Stream> stub;
     private UninstallRecord? previous, applied;
+    private InstallerDiagnostics? diagnostics;
+    private UninstallRecord? preflightRecord;
+    private string? preflightHash;
+    private bool preflightDone;
     private bool fileCreated;
     private byte[]? replacedStub;
     private string? stubHash;
     internal static UninstallRecord Record(string root) => new(root, "\"" + Path.Combine(root, "uninstall.exe") + "\" --uninstall", InstallEngine.Version);
-    internal InstallRegistration(string root) : this(root, new UserRegistration(), new RegistryUninstallStore(),
-        OpenUninstaller) { }
+    internal InstallRegistration(string root, InstallerDiagnostics? diagnostics = null) : this(root, new UserRegistration(), new RegistryUninstallStore(),
+        OpenUninstaller) { this.diagnostics = diagnostics; }
     internal static Stream OpenUninstaller()
     {
         var assembly = typeof(InstallRegistration).Assembly;
@@ -71,23 +75,66 @@ internal sealed class InstallRegistration : IRegistration
         }
         catch { input.Dispose(); throw; }
     }
-    internal InstallRegistration(string root, UserRegistration protocol, IUninstallStore store, Func<Stream> stub)
-    { this.root = Path.GetFullPath(root); this.protocol = protocol; this.store = store; this.stub = stub; }
+    internal InstallRegistration(string root, UserRegistration protocol, IUninstallStore store, Func<Stream> stub, InstallerDiagnostics? diagnostics = null)
+    { this.diagnostics = diagnostics; this.root = Path.GetFullPath(root); this.protocol = protocol; this.store = store; this.stub = stub; }
+    private static string? OldPin(string? version) => version switch
+    {
+        "1.0.1" => "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B",
+        "1.0.2" => "20A3C4D98F79FBC3604ECC8759D914D5968C8B0F5222BCF4E334B328162F371C",
+        "1.0.3" => "BC78BF0274F4A9CB7B99F2A6D4E672F96F1C8D71179DA73E05E3157B9002587A",
+        _ => null
+    };
+    private (UninstallRecord? Record, string? Hash) Inspect(string stage, string incomingHash)
+    {
+        var record = store.Read(); var expected = Record(root);
+        var path = InstallEngine.Safe(root, "uninstall.exe");
+        var hash = File.Exists(path) ? InstallEngine.Digest(path) : null;
+        var upgrading = record is { OwnedShape: true } && OldPin(record.Version) is not null && record == expected with { Version = record.Version };
+        var knownPin = hash is null ? "absent" : hash == incomingHash ? "current" : new[] { "1.0.1", "1.0.2", "1.0.3" }.FirstOrDefault(v => hash == OldPin(v)) ?? "unknown";
+        diagnostics?.Identity(stage, record is not null, record?.Version is "1.0.1" or "1.0.2" or "1.0.3" ? record.Version : record?.Version == InstallEngine.Version ? "current" : record is null ? "absent" : "unknown",
+            record?.OwnedShape == true, record == expected, upgrading, hash is not null, knownPin, hash == incomingHash || upgrading && hash == OldPin(record?.Version),
+            preflightDone && record != preflightRecord, preflightDone && hash != preflightHash);
+        if (record is not null && record != expected && !upgrading) throw new IOException("uninstall_registration_conflict");
+        if (hash is not null && hash != incomingHash && (!upgrading || hash != OldPin(record?.Version))) throw new IOException("uninstaller_file_conflict");
+        return (record, hash);
+    }
+    public void Preflight(string executable)
+    {
+        using var source = stub();
+        var incomingHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(source));
+        try
+        {
+            preflightRecord = store.Read();
+            var path = InstallEngine.Safe(root, "uninstall.exe");
+            preflightHash = File.Exists(path) ? InstallEngine.Digest(path) : null; preflightDone = true;
+            Inspect("before_copy", incomingHash);
+            protocol.Preflight(executable);
+        }
+        catch { InspectFailure("preflight_failed", incomingHash); throw; }
+    }
+    private void InspectFailure(string stage, string incomingHash)
+    { try { Inspect(stage, incomingHash); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     public void Apply(string executable)
     {
+        try { ApplyStrict(executable); }
+        catch { if (stubHash is not null) InspectFailure("apply_failed", stubHash); throw; }
+    }
+    private void ApplyStrict(string executable)
+    {
         var path = InstallEngine.Safe(root, "uninstall.exe");
-        previous = store.Read();
-        applied = Record(root);
-        var upgrading = previous is { OwnedShape: true, Version: "1.0.1" or "1.0.2" } && previous == applied with { Version = previous.Version };
-        if (previous is not null && previous != applied && !upgrading) throw new IOException("uninstall_registration_conflict");
         using var source = stub(); using var bytes = new MemoryStream(); source.CopyTo(bytes);
         stubHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes.ToArray()));
+        Inspect("before_apply", stubHash);
+        previous = store.Read();
+        applied = Record(root);
+        var upgrading = previous is { OwnedShape: true, Version: "1.0.1" or "1.0.2" or "1.0.3" } && previous == applied with { Version = previous.Version };
+        if (previous is not null && previous != applied && !upgrading) throw new IOException("uninstall_registration_conflict");
+        if (preflightDone && store.Read() != preflightRecord) throw new IOException("uninstall_registration_changed");
+        if (preflightDone && (File.Exists(path) ? InstallEngine.Digest(path) : null) != preflightHash) throw new IOException("uninstaller_file_changed");
         if (File.Exists(path) && InstallEngine.Digest(path) != stubHash)
         {
             // Identity of the uninstaller shipped in the actual 1.0.1 release.
-            var oldStubHash = previous?.Version == "1.0.2"
-                ? "20A3C4D98F79FBC3604ECC8759D914D5968C8B0F5222BCF4E334B328162F371C"
-                : "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B";
+            var oldStubHash = OldPin(previous?.Version);
             if (!upgrading || InstallEngine.Digest(path) != oldStubHash)
                 throw new IOException("uninstaller_file_conflict");
             replacedStub = File.ReadAllBytes(path);

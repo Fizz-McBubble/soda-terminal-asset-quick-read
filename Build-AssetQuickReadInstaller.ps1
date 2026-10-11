@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory)
+param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory, [string]$ReusePublishedPayloadDirectory)
 $ErrorActionPreference='Stop'
 $derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
 if (-not $TemporaryDirectory) { $TemporaryDirectory = if ($env:SODA_BUILD_TEMP_DIRECTORY) { $env:SODA_BUILD_TEMP_DIRECTORY } else { Join-Path $derivedRoot 'temp\asset-quick-read-installer' } }
@@ -18,6 +18,19 @@ $sdk=Split-Path -Parent $DotNetPath
 $env:DOTNET_ROOT=$sdk; # Standard SDK package cache.
  $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'
 New-Item -ItemType Directory -Path $output | Out-Null
+if ($ReusePublishedPayloadDirectory) {
+    # Reuse immutable reviewed payload bytes; only the installer changes.
+    $oldCatalogPath=Join-Path $ReusePublishedPayloadDirectory 'catalog.json'
+    $publishedCatalog=Join-Path $PSScriptRoot 'installer/published-1.0.3-catalog.json'
+    if((Get-FileHash -LiteralPath $oldCatalogPath).Hash -cne (Get-FileHash -LiteralPath $publishedCatalog).Hash){throw 'Published payload catalog mismatch.'}
+    $oldCatalog=Get-Content -LiteralPath $oldCatalogPath -Raw | ConvertFrom-Json
+    $archive=Join-Path $ReusePublishedPayloadDirectory 'setup/payload/asset-quick-read.zip'
+    if((Get-FileHash -LiteralPath $archive).Hash -cne $oldCatalog.archiveSha256){throw 'Published payload archive mismatch.'}
+    $catalogFiles=$oldCatalog.files
+    # NSIS reads the existing immutable archive directly; no runtime copy is made.
+    if(-not $NsisPath){throw 'Published payload reuse requires the pinned NSIS wrapper.'}
+    $payloadDirectory=Join-Path $output 'setup/payload'; [IO.Directory]::CreateDirectory($payloadDirectory) | Out-Null
+} else {
 $privatePackage=Join-Path $output 'private-complete-package'
 & (Join-Path $PSScriptRoot 'Package-AssetQuickRead.ps1') -BridgeOutputDirectory $BridgeOutputDirectory -DestinationDirectory $privatePackage -RuntimeDirectory $RuntimeDirectory
 $payloadRoot=Join-Path $output 'public-embedded-payload'; [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
@@ -66,6 +79,7 @@ try{foreach($file in Get-ChildItem -LiteralPath $payloadRoot -File -Recurse){
 }}finally{$zip.Dispose()}
 $catalogFiles=@(foreach($file in Get-ChildItem -LiteralPath $payloadRoot -File -Recurse){[ordered]@{path=[IO.Path]::GetRelativePath($payloadRoot,$file.FullName).Replace('\','/');size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName).Hash;download=$false}})
 $catalogFiles+=@(foreach($relative in $remote){$file=Get-Item -LiteralPath (Join-Path $privatePackage $relative); [ordered]@{path=$relative;size=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName).Hash;download=$true}})
+}
 $projectXml=[xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -Raw)
 $version=[string]$projectXml.Project.PropertyGroup.Version
 $catalog=[ordered]@{version=$version;archiveSha256=(Get-FileHash -LiteralPath $archive).Hash;files=$catalogFiles}

@@ -20,13 +20,27 @@ internal static class UpgradeIdentityTests
         public void Write(UninstallRecord value) { Value = value; if (Fail) throw new IOException("synthetic_write_failure"); }
         public bool Remove(UninstallRecord value) { if (Value != value) return false; Value = null; return true; }
     }
+    internal static int RunPreflight(string output)
+    {
+        var root = Path.Combine(Path.GetDirectoryName(output)!, "preflight-counterexample");
+        Directory.CreateDirectory(root); var oldStub = Path.Combine(root, "uninstall.exe"); File.WriteAllText(oldStub, "UNKNOWN PRESERVE");
+        var diagnostics = new InstallerDiagnostics(Path.Combine(root, "diagnostics"));
+        var registration = new InstallRegistration(root, new UserRegistration(new ProtocolStore(), Path.Combine(root, "reader.url")), new UninstallStore(), () => new MemoryStream("MZ new"u8.ToArray()), diagnostics);
+        var code = "";
+        try { InstallEngine.Install(Path.Combine(root, "missing.zip"), new Catalog(InstallEngine.Version, "unused", new[] { new CatalogFile("file", 1, "unused") }), root, registration, CancellationToken.None, _ => { }, diagnostics: diagnostics); }
+        catch (IOException error) { code = error.Message; }
+        var identity = File.ReadAllText(Path.Combine(root, "diagnostics", "latest.json"));
+        var ok = identity.Contains("preflight_failed") && !identity.Contains(root) && code == "uninstaller_file_conflict" && !Directory.Exists(Path.Combine(root, "versions")) && File.ReadAllText(oldStub) == "UNKNOWN PRESERVE";
+        File.WriteAllText(output, JsonSerializer.Serialize(new { ok, code, payloadCopyStarted = Directory.Exists(Path.Combine(root, "versions")), scope = "isolated foreign stub; no real registry or installer execution" }));
+        return ok ? 0 : 1;
+    }
     internal static int Run(string output, string oldStub)
     {
         var checks = new List<string>();
         void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks.Add(name); }
         try
         {
-            Check(InstallEngine.Version == "1.0.3" && InstallEngine.ReadCatalog().Version == "1.0.3", "installer_catalog_identity");
+            Check(InstallEngine.Version == "1.0.4" && InstallEngine.ReadCatalog().Version == InstallEngine.Version, "installer_catalog_identity");
             Check(InstallEngine.Digest(oldStub) == "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B", "actual_published_101_uninstaller");
             var pins = AssetUninstall.Published101Catalog().Files.Where(file => UserRegistration.Published100Pins.ContainsKey(file.Path)).ToArray();
             Check(pins.Length == 5, "actual_published_101_launch_pins");

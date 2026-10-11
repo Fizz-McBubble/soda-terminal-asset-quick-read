@@ -89,7 +89,7 @@ internal sealed partial class InstallForm : Form
                 else
                     for (var attempt = 0; !File.Exists(Path.Combine(payload, "ready")); attempt++)
                     { token.ThrowIfCancellationRequested(); if (File.Exists(Path.Combine(payload, "failed")) || attempt >= 600) throw new IOException("offline_payload_unavailable"); await Task.Delay(200, token); }
-                installed = await Task.Run(() => InstallEngine.Install(Path.Combine(payload, "asset-quick-read.zip"), InstallEngine.ReadCatalog(), InstallEngine.DefaultRoot, new InstallRegistration(InstallEngine.DefaultRoot), token, ((IProgress<int>)reporter).Report, diagnostics: diagnostics), token);
+                installed = await Task.Run(() => InstallEngine.Install(Path.Combine(payload, "asset-quick-read.zip"), InstallEngine.ReadCatalog(), InstallEngine.DefaultRoot, new InstallRegistration(InstallEngine.DefaultRoot, diagnostics), token, ((IProgress<int>)reporter).Report, diagnostics: diagnostics), token);
             }
             finally { operation.ReleaseMutex(); }
             }

@@ -25,7 +25,7 @@ File.WriteAllBytes(Path.Combine(previous,"manifest.json"),new byte[bytes.Length]
 var diagnostic=new InstallerDiagnostics(Path.Combine(root,"diagnostic")); diagnostic.Record("protocol","verified",0,"github_contents"); diagnostic.Record("failed",InstallerDiagnostics.Code(new IOException("private-user-path secret=abc")));
 var record=File.ReadAllText(Path.Combine(root,"diagnostic/latest.json")); Check(!record.Contains("secret")&&!record.Contains("private-user")&&record.Contains("installer_local_operation_failed"),"redacted_diagnostic");
 Check(InstallerDiagnostics.Message("protocol_registration_conflict").Contains("入口")&&!InstallerDiagnostics.Message("protocol_registration_conflict").Contains("网络"),"local_failure_not_network");
-Check(InstallEngine.Version=="1.0.3","current_version");
+Check(InstallEngine.Version=="1.0.4","current_version");
 return System.Text.Json.JsonSerializer.Serialize(new{passed=checks.Count,checks});
 }
 sealed class Fake(Func<HttpRequestMessage,HttpResponseMessage> response):HttpMessageHandler { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token) {token.ThrowIfCancellationRequested(); return Task.FromResult(response(request));} }

@@ -30,7 +30,7 @@ internal static class ProtocolDownload
             using var client = clientFactory?.Invoke() ?? new HttpClient(new HttpClientHandler
                 { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false }) { Timeout = Timeout.InfiniteTimeSpan };
             using var request = new HttpRequestMessage(HttpMethod.Get, source.Url);
-            request.Headers.UserAgent.ParseAdd("SodaTerminal-AssetQuickRead-Installer/1.0.3");
+            request.Headers.UserAgent.ParseAdd("SodaTerminal-AssetQuickRead-Installer/" + InstallEngine.Version);
             if (source.Id == "github_contents") request.Headers.Accept.ParseAdd("application/vnd.github.raw+json");
             try
             {
