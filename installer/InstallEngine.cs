@@ -9,7 +9,7 @@ internal interface IRegistration { void Preflight(string executable) { } void Ap
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.0.4";
+    internal const string Version = "1.0.5";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)

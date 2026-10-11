@@ -40,34 +40,49 @@ internal static class UpgradeIdentityTests
         void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks.Add(name); }
         try
         {
-            Check(InstallEngine.Version == "1.0.4" && InstallEngine.ReadCatalog().Version == InstallEngine.Version, "installer_catalog_identity");
+            Check(InstallEngine.Version == "1.0.5" && InstallEngine.ReadCatalog().Version == InstallEngine.Version, "installer_catalog_identity");
             Check(InstallEngine.Digest(oldStub) == "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B", "actual_published_101_uninstaller");
             var pins = AssetUninstall.Published101Catalog().Files.Where(file => UserRegistration.Published100Pins.ContainsKey(file.Path)).ToArray();
             Check(pins.Length == 5, "actual_published_101_launch_pins");
-            foreach (var outcome in new[] { "success", "rollback", "foreign-stub" })
+            foreach (var outcome in new[] { "success", "rollback", "foreign-stub", "orphan-success", "orphan-rollback", "orphan-foreign-stub", "orphan-foreign-runtime", "orphan-foreign-protocol", "orphan-missing-protocol", "orphan-registry-race", "orphan-stub-race", "orphan-runtime-race", "orphan-protocol-race" })
             {
+                var orphan = outcome.StartsWith("orphan-", StringComparison.Ordinal);
+                var success = outcome is "success" or "orphan-success";
                 var root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(output)!, "upgrade-" + outcome + "-" + Guid.NewGuid().ToString("N")));
                 var previous = Path.Combine(root, "versions", "1.0.1");
                 foreach (var pin in pins)
                 { var file = InstallEngine.Safe(previous, pin.Path); Directory.CreateDirectory(Path.GetDirectoryName(file)!); File.WriteAllText(file, "SYNTHETIC:" + pin.Path); }
                 Directory.CreateDirectory(Path.Combine(root, "jobs")); File.WriteAllText(Path.Combine(root, "jobs", "keep.json"), "PRESERVE");
                 var installedStub = Path.Combine(root, "uninstall.exe");
-                if (outcome == "foreign-stub") File.WriteAllText(installedStub, "UNKNOWN"); else File.Copy(oldStub, installedStub);
+                if (outcome.EndsWith("foreign-stub", StringComparison.Ordinal)) File.WriteAllText(installedStub, "UNKNOWN"); else File.Copy(oldStub, installedStub);
                 var originalHash = InstallEngine.Digest(installedStub);
                 var protocol = new ProtocolStore { Value = new(UserRegistration.Description, "", UserRegistration.Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe")), true) };
-                var oldCommand = protocol.Value.Command;
-                var store = new UninstallStore { Value = InstallRegistration.Record(root) with { Version = "1.0.1" }, Fail = outcome == "rollback" };
+                if (outcome == "orphan-foreign-protocol") protocol.Value = protocol.Value with { OwnedShape = false };
+                if (outcome == "orphan-missing-protocol") protocol.Value = null;
+                var oldProtocol = protocol.Value;
+                var store = new UninstallStore { Value = orphan ? null : InstallRegistration.Record(root) with { Version = "1.0.1" }, Fail = outcome is "rollback" or "orphan-rollback" };
+                var runtimeChanged = outcome == "orphan-foreign-runtime";
                 var registration = new UserRegistration(protocol, Path.Combine(root, "start-menu", "reader.url"), path =>
                 {
+                    if (runtimeChanged) return "UNKNOWN";
                     var relative = Path.GetRelativePath(previous, path).Replace('\\', '/');
                     return pins.Single(pin => pin.Path == relative).Sha256;
                 });
                 var replacement = "MZ synthetic new icon uninstaller"u8.ToArray();
                 var entries = new InstallRegistration(root, registration, store, () => new MemoryStream(replacement));
                 var target = Path.Combine(root, "versions", InstallEngine.Version, "Soda.AssetQuickRead.Bridge.exe");
-                try { entries.Apply(target); Check(outcome == "success", outcome + "_must_reject"); }
-                catch (IOException) { Check(outcome != "success", outcome + "_expected_failure"); store.Fail = false; entries.Rollback(); }
-                if (outcome == "success")
+                UninstallRecord? foreignRecord = null;
+                try
+                {
+                    entries.Preflight(target);
+                    if (outcome == "orphan-registry-race") store.Value = foreignRecord = InstallRegistration.Record(root) with { Root = "FOREIGN" };
+                    if (outcome == "orphan-stub-race") File.WriteAllText(installedStub, "CHANGED AFTER PREFLIGHT");
+                    if (outcome == "orphan-runtime-race") runtimeChanged = true;
+                    if (outcome == "orphan-protocol-race") protocol.Value = oldProtocol = protocol.Value! with { OwnedShape = false };
+                    entries.Apply(target); Check(success, outcome + "_must_reject");
+                }
+                catch (IOException) { Check(!success, outcome + "_expected_failure"); store.Fail = false; entries.Rollback(); }
+                if (success)
                 {
                     Check(store.Value == InstallRegistration.Record(root), "101_registry_promoted");
                     Check(protocol.Value?.Command == UserRegistration.Command(target), "101_protocol_promoted");
@@ -75,8 +90,8 @@ internal static class UpgradeIdentityTests
                 }
                 else
                 {
-                    Check(store.Value?.Version == "1.0.1" && protocol.Value?.Command == oldCommand, outcome + "_registration_restored");
-                    Check(InstallEngine.Digest(installedStub) == originalHash, outcome + "_stub_preserved");
+                    Check(store.Value == (foreignRecord ?? (orphan ? null : InstallRegistration.Record(root) with { Version = "1.0.1" })) && protocol.Value == oldProtocol, outcome + "_registration_restored");
+                    Check(outcome == "orphan-stub-race" ? File.ReadAllText(installedStub) == "CHANGED AFTER PREFLIGHT" : InstallEngine.Digest(installedStub) == originalHash, outcome + "_stub_preserved");
                 }
                 Check(File.ReadAllText(Path.Combine(root, "jobs", "keep.json")) == "PRESERVE", outcome + "_results_preserved");
                 Check(pins.All(pin => File.ReadAllText(InstallEngine.Safe(previous, pin.Path)) == "SYNTHETIC:" + pin.Path), outcome + "_old_runtime_preserved");
