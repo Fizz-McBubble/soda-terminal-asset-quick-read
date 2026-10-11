@@ -1,0 +1,31 @@
+name: Public quick reader source build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out public sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Select the locked .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 8.0.423
+      - name: Compile bridge and installer sources
+        shell: pwsh
+        run: |
+          '{"sdk":{"version":"8.0.423","rollForward":"disable"}}' | Set-Content -LiteralPath global.json -Encoding utf8
+          $artifactRoot = Join-Path $env:RUNNER_TEMP 'soda-quick-reader-source-build'
+          dotnet build bridge/Soda.AssetQuickRead.Bridge.csproj -c Release --artifacts-path (Join-Path $artifactRoot 'bridge') -p:UseSharedCompilation=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $catalogPath = Join-Path $env:GITHUB_WORKSPACE 'installer/published-1.0.3-catalog.json'
+          dotnet build installer/Soda.AssetQuickRead.Setup.csproj -c Release --artifacts-path (Join-Path $artifactRoot 'installer') -p:UseSharedCompilation=false "-p:PayloadCatalog=$catalogPath"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

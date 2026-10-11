@@ -20,6 +20,8 @@ Windows x64 独立资产快读工具；与 OCR 扫描器分别安装和运行。
 
 ## 构建
 
+GitHub Actions提供手动触发的公开.NET桥接与安装器源码编译，SDK固定为8.0.423。它不启动读取或安装，也不生成已签名发行包；Rust/驱动与最终包装仍由下述显式脚本构建。
+
 需要 Windows x64、MSVC C++ Build Tools、Rust（见 Cargo.toml）、.NET 8 SDK、PowerShell。脚本不会安装全局工具或启动采集。
 
 ~~~powershell
