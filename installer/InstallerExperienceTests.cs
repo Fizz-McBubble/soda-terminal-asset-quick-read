@@ -5,8 +5,9 @@ internal static class InstallerExperienceTests
     private sealed class ProtocolStore : IProtocolRegistrationStore
     {
         internal ProtocolRegistration? Value;
+        internal bool IgnoreCreate;
         public ProtocolRegistration? Read() => Value;
-        public void Create(string command) => Value = new(UserRegistration.Description, "", command, true);
+        public void Create(string command) { if (!IgnoreCreate) Value = new(UserRegistration.Description, "", command, true); }
         public bool Replace(ProtocolRegistration expected, string command) { if (Value != expected) return false; Value = expected with { Command = command }; return true; }
         public void RemoveCreated(string command) { if (Value?.Command == command && Value.OwnedShape) Value = null; }
     }
@@ -14,8 +15,9 @@ internal static class InstallerExperienceTests
     {
         internal UninstallRecord? Value;
         internal bool Fail;
+        internal bool IgnoreWrite;
         public UninstallRecord? Read() => Value;
-        public void Write(UninstallRecord value) { Value = value; if (Fail) throw new IOException("synthetic_registration_failure"); }
+        public void Write(UninstallRecord value) { if (!IgnoreWrite) Value = value; if (Fail) throw new IOException("synthetic_registration_failure"); }
         public bool Remove(UninstallRecord value) { if (Value != value) return false; Value = null; return true; }
     }
     internal static int RunFullPackage(string install, string archive, Catalog catalog, string privatePayload)
@@ -57,6 +59,21 @@ internal static class InstallerExperienceTests
         void Check(bool value) { if (!value) throw new Exception("installer_experience_assertion"); passed++; }
         var sample = System.Text.Encoding.UTF8.GetBytes("MZ synthetic uninstall program");
         var stubHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sample));
+        foreach (var missing in new[] { "protocol", "uninstall" })
+        {
+            var install = Path.Combine(root, "silent-write-" + missing);
+            var protocol = new ProtocolStore { IgnoreCreate = missing == "protocol" };
+            var store = new UninstallStore { IgnoreWrite = missing == "uninstall" };
+            var shortcut = Path.Combine(install, "synthetic-start-menu", "quick-read.url");
+            var diagnostics = new InstallerDiagnostics(Path.Combine(install, "installer-diagnostics"));
+            var entries = new InstallRegistration(install, new UserRegistration(protocol, shortcut), store, () => new MemoryStream(sample));
+            Directory.CreateDirectory(Path.Combine(install, "jobs")); File.WriteAllText(Path.Combine(install, "jobs", "keep.json"), "PRESERVE");
+            try { InstallEngine.Install(archive, catalog, install, entries, CancellationToken.None, _ => { }, diagnostics: diagnostics); throw new Exception("silent_registration_write_accepted"); }
+            catch (IOException error) { Check(error.Message == (missing == "protocol" ? "protocol_registration_verify_failed" : "uninstall_registration_verify_failed")); }
+            Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(install, "uninstall.exe")));
+            Check(!Directory.Exists(Path.Combine(install, "versions", catalog.Version)));
+            Check(File.ReadAllText(Path.Combine(install, "jobs", "keep.json")) == "PRESERVE");
+        }
         foreach (var fail in new[] { false, true })
         {
             var install = Path.Combine(root, "experience-" + fail);
@@ -109,6 +126,7 @@ internal static class InstallerExperienceTests
         }
         Check(File.ReadAllText(trace) == "SYNTHETIC_TRACE" && File.ReadAllText(Path.Combine(discoveryRoot, "jobs", "keep.json")) == "PRESERVE");
         passed += RunHandlers(root, archive, catalog, sample, stubHash);
+        passed += RunServiceSwitchHandlers(root, archive, catalog, sample, stubHash);
         var render = Path.Combine(root, "installer-ui"); Directory.CreateDirectory(render);
         foreach (var scale in new[] { 1f, 1.25f, 1.5f })
         foreach (var state in new[] { "initial", "preparing", "progress", "starting", "completion", "started", "start-error", "cancelled", "error", "upgrade", "repair" })
@@ -174,18 +192,20 @@ internal static class InstallerExperienceTests
             Check(serviceAttempts == 2 && installAttempts == 2);
             Check(dispatches.Take(2).All(start => start.FileName == Path.Combine(root, "versions", catalog.Version, "Soda.AssetQuickRead.Bridge.exe") && start.Arguments == "--serve" && start.WorkingDirectory == Path.GetDirectoryName(start.FileName)));
             Button(form, "完成").PerformClick(); Check(form.IsDisposed);
-            Check(dispatches.Count == 2 && dispatches.All(start => start.Arguments == "--serve" && start.UseShellExecute));
+            Check(dispatches.Count == 2 && dispatches.All(start => start.Arguments == "--serve" && !start.UseShellExecute && start.CreateNoWindow && start.WindowStyle == System.Diagnostics.ProcessWindowStyle.Hidden));
         }
         using (var form = new InstallForm(true, operations))
         {
             form.SetInstalledVersion(registration.InstalledVersion(root)); Show(form);
             Button(form, "修复安装").PerformClick(); Pump(() => Has(form, "完成"));
             Check(File.Exists(Path.Combine(root, "uninstall.exe")) && serviceAttempts == 3 && installAttempts == 3);
-            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"));
+            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"), form);
             Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(root, "uninstall.exe")));
-            Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "完成"));
+            Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "完成") && Button(form, "卸载").Enabled);
             Check(serviceAttempts == 4 && installAttempts == 4);
-            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"));
+            if (!Button(form, "卸载").Visible || !Button(form, "卸载").Enabled) throw new Exception("reinstalled_uninstall_state:visible=" + Button(form, "卸载").Visible + ":enabled=" + Button(form, "卸载").Enabled + ":formVisible=" + form.Visible + ":disposed=" + form.IsDisposed);
+            passed++;
+            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"), form);
             Check(protocol.Value is null && store.Value is null);
             Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
         }
@@ -213,10 +233,110 @@ internal static class InstallerExperienceTests
         return passed;
         void Check(bool condition) { if (!condition) throw new Exception("button_handler_assertion"); passed++; }
     }
+    private static int RunServiceSwitchHandlers(string baseRoot, string archive, Catalog catalog, byte[] sample, string stubHash)
+    {
+        var passed = 0;
+        void Check(bool condition, string name) { if (!condition) throw new Exception("service_switch_" + name); passed++; }
+        var root = Path.Combine(baseRoot, "service-switch-handlers");
+        var protocol = new ProtocolStore(); var store = new UninstallStore();
+        var shortcut = Path.Combine(root, "start-menu", "quick-read.url");
+        var registration = new UserRegistration(protocol, shortcut);
+        var entries = new InstallRegistration(root, registration, store, () => new MemoryStream(sample));
+
+        var switchAttempted = 0;
+        var serviceDispatches = new List<System.Diagnostics.ProcessStartInfo>();
+        var mockOldBridge = new Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge(
+            12345, DateTime.UtcNow.Ticks, Path.Combine(root, "versions", "1.0.3", "Soda.AssetQuickRead.Bridge.exe"),
+            Path.Combine(root, "versions", "1.0.3"), "1.0.3", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+
+        var userConfirmed = false;
+        var operations = new FormOperations(root,
+            (progress, token) => Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token),
+            start => { serviceDispatches.Add(start); return Task.CompletedTask; },
+            () => Task.CompletedTask,
+            InspectOldService: () => Task.FromResult<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge?>(mockOldBridge),
+            SwitchOldService: bridge => { switchAttempted++; return Task.FromResult(true); },
+            ConfirmSwitch: () => userConfirmed);
+
+        using (var form = new InstallForm(true, operations))
+        {
+            Show(form);
+            Button(form, "开始安装").PerformClick();
+            Pump(() => Has(form, "切换到新版"));
+            Check(Has(form, "切换到新版"), "offers_switch_to_new_version");
+            Check(switchAttempted == 0, "zero_termination_before_switch");
+            Check(serviceDispatches.Count == 0, "no_new_service_before_switch");
+
+            userConfirmed = false;
+            Button(form, "切换到新版").PerformClick();
+            Application.DoEvents();
+            Check(Has(form, "切换到新版"), "unconfirmed_click_keeps_button");
+            Check(switchAttempted == 0, "unconfirmed_zero_termination");
+            Check(serviceDispatches.Count == 0, "unconfirmed_no_dispatch");
+
+            userConfirmed = true;
+            Button(form, "切换到新版").PerformClick();
+            Pump(() => Has(form, "完成"));
+            Check(Has(form, "完成"), "switch_completed_to_done");
+            Check(switchAttempted == 1, "switch_executed_once");
+            Check(serviceDispatches.Count == 1 && serviceDispatches[0].Arguments == "--serve", "new_service_dispatched");
+            Button(form, "完成").PerformClick();
+            Check(form.IsDisposed, "form_disposed_on_done");
+        }
+
+        var raceOperations = new FormOperations(root,
+            (progress, token) => Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token),
+            start => Task.CompletedTask,
+            () => Task.CompletedTask,
+            InspectOldService: () => Task.FromResult<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge?>(mockOldBridge),
+            SwitchOldService: bridge => Task.FromResult(false),
+            ConfirmSwitch: () => true);
+
+        using (var form = new InstallForm(true, operations with { ConfirmSwitch = null }))
+        {
+            var switchesBefore = switchAttempted; var dispatchesBefore = serviceDispatches.Count;
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "切换到新版"));
+            Button(form, "切换到新版").PerformClick(); Application.DoEvents();
+            Check(switchAttempted == switchesBefore && serviceDispatches.Count == dispatchesBefore, "missing_confirmation_zero_dispatch_or_termination");
+            Button(form, "关闭").PerformClick(); Check(form.IsDisposed, "missing_confirmation_can_close");
+        }
+
+        using (var form = new InstallForm(true, raceOperations))
+        {
+            Show(form);
+            Button(form, "开始安装").PerformClick();
+            Pump(() => Has(form, "切换到新版"));
+            Button(form, "切换到新版").PerformClick();
+            Pump(() => Has(form, "重试启动"));
+            Check(Has(form, "重试启动") && !Has(form, "切换到新版"), "race_rejection_falls_back_to_retry");
+            Button(form, "关闭").PerformClick();
+            Check(form.IsDisposed, "race_form_disposed");
+        }
+
+        var foreignOperations = new FormOperations(root,
+            (progress, token) => Task.Run(() => InstallEngine.Install(archive, catalog, root, entries, token, progress.Report), token),
+            start => throw new IOException("port_conflict"),
+            () => Task.CompletedTask,
+            InspectOldService: () => Task.FromResult<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge?>(null),
+            SwitchOldService: null,
+            ConfirmSwitch: null);
+
+        using (var form = new InstallForm(true, foreignOperations))
+        {
+            Show(form);
+            Button(form, "开始安装").PerformClick();
+            Pump(() => Has(form, "重试启动"));
+            Check(Has(form, "重试启动") && !Has(form, "切换到新版"), "foreign_occupant_no_switch_button");
+            Button(form, "关闭").PerformClick();
+            Check(form.IsDisposed, "foreign_form_disposed");
+        }
+
+        return passed;
+    }
     private static bool Has(Form form, string label) => form.Controls.OfType<Button>().Any(button => button.Text == label && button.Enabled);
     private static Button Button(Form form, string label) => form.Controls.OfType<Button>().Single(button => button.Text == label);
     private static void Show(Form form)
     { form.ShowInTaskbar = false; form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-32000, -32000); form.Opacity = 0; form.Show(); }
-    private static void Pump(Func<bool> condition)
-    { var timeout = DateTime.UtcNow.AddSeconds(20); while (!condition()) { Application.DoEvents(); if (DateTime.UtcNow > timeout) throw new Exception("button_handler_timeout"); Thread.Sleep(5); } Application.DoEvents(); }
+    private static void Pump(Func<bool> condition, Form? form = null)
+    { var timeout = DateTime.UtcNow.AddSeconds(20); while (!condition()) { Application.DoEvents(); if (DateTime.UtcNow > timeout) throw new Exception("button_handler_timeout:" + (form is null ? "unknown" : string.Join(";", form.Controls.OfType<Panel>().SelectMany(panel => panel.Controls.Cast<Control>()).Select(control => control.Text).Concat(form.Controls.OfType<Button>().Select(button => button.Text + ":visible=" + button.Visible + ":enabled=" + button.Enabled))))); Thread.Sleep(5); } Application.DoEvents(); }
 }

@@ -22,6 +22,7 @@ internal sealed partial class InstallForm : Form
     private bool serviceStarting;
     private readonly bool previewOnly;
     private readonly FormOperations? testOperations;
+    private Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge? pendingOldBridge;
     internal InstallForm(bool preview = false, FormOperations? testOperations = null)
     {
         if (testOperations != null && (!preview || Path.GetFullPath(testOperations.Root) == Path.GetFullPath(InstallEngine.DefaultRoot))) throw new InvalidOperationException("isolated_form_operations_required");
@@ -60,6 +61,11 @@ internal sealed partial class InstallForm : Form
         if (serviceStarted)
         {
             Close();
+            return;
+        }
+        if (pendingOldBridge is not null)
+        {
+            await SwitchOldService();
             return;
         }
         if (installed is not null)
@@ -120,6 +126,73 @@ internal sealed partial class InstallForm : Form
             running.Dispose(); running = null; progress.Indeterminate = false; action.Visible = true; action.Enabled = true; cancel.Enabled = true; uninstall.Enabled = true; cancel.Text = "关闭";
         }
     }
+    private async Task SwitchOldService()
+    {
+        if (pendingOldBridge is null || installed is null || serviceStarting || running is not null) return;
+        var oldBridge = pendingOldBridge;
+        const string confirmText = "请先在网页取消或完成正在进行的读取，再切换到新版。\n切换将结束旧版连接服务，但不会保证已提权的读取子进程一同结束。\n已经保存的读取结果和账户数据保留。\n\n是否已完成或取消读取，并确认结束旧版连接服务、切换到新版？";
+        const string confirmCaption = "Soda Terminal · 资产快读";
+        bool confirmed;
+        if (testOperations is not null)
+        {
+            confirmed = testOperations.ConfirmSwitch?.Invoke() ?? false;
+        }
+        else
+        {
+            confirmed = MessageBox.Show(confirmText, confirmCaption, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
+        }
+        if (!confirmed) return;
+
+        serviceStarting = true;
+        action.Enabled = cancel.Enabled = uninstall.Enabled = false;
+        action.Visible = false; cancel.Text = "关闭";
+        text.Text = "正在切换到新版连接服务…";
+        progress.Visible = true; progress.Value = 100; progress.Indeterminate = true;
+
+        try
+        {
+            if (testOperations?.SwitchOldService is not null)
+            {
+                var switched = await testOperations.SwitchOldService(oldBridge);
+                if (!switched) throw new IOException("service_switch_race_rejected");
+            }
+            else
+            {
+                var switched = await Soda.AssetQuickRead.ServiceReadiness.RecheckAndTerminate(oldBridge);
+                if (!switched) throw new IOException("service_switch_race_rejected");
+            }
+
+            pendingOldBridge = null;
+            await Dispatch(new ProcessStartInfo(Path.Combine(installed, "Soda.AssetQuickRead.Bridge.exe"), "--serve")
+                { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = installed }, true);
+            serviceStarted = true;
+            text.Text = "安装完成，请返回网页连接。";
+            UpdateDetails("资产快读连接服务已切换到新版并启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。");
+            action.Text = "完成";
+        }
+        catch (Exception error)
+        {
+            pendingOldBridge = null;
+            var isRace = error is IOException io && io.Message == "service_switch_race_rejected";
+            text.Text = "切换未完成，连接服务未启动，请重试启动。";
+            if (isRace)
+            {
+                UpdateDetails("切换前检测到服务状态、文件或端口占用发生变化，已中止切换以保护现有进程。\r\n读取结果和账户数据已保留，请手动检查后重试启动。");
+            }
+            else
+            {
+                UpdateDetails("连接服务切换或启动失败。请重试；若仍失败，请查看网页诊断。\r\n工具不会停止未知进程，读取结果和账户数据已保留。");
+            }
+            action.Text = "重试启动";
+        }
+        finally
+        {
+            serviceStarting = false;
+            progress.Indeterminate = false;
+            action.Visible = true;
+            action.Enabled = cancel.Enabled = uninstall.Enabled = running is null;
+        }
+    }
     private async Task StartInstalledService()
     {
         if (installed is null || serviceStarted || serviceStarting) return;
@@ -130,8 +203,42 @@ internal sealed partial class InstallForm : Form
         progress.Visible = true; progress.Value = 100; progress.Indeterminate = false;
         try
         {
-            await Dispatch(new ProcessStartInfo(Path.Combine(installed, "Soda.AssetQuickRead.Bridge.exe"), "--serve")
-                { UseShellExecute = true, WorkingDirectory = installed }, true);
+            var targetExe = Path.Combine(installed, "Soda.AssetQuickRead.Bridge.exe");
+            var start = new ProcessStartInfo(targetExe, "--serve")
+                { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = installed };
+
+            if (testOperations is null)
+            {
+                if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.4", 50609, "SodaTerminal.AssetQuickRead.Identity.50609"))
+                {
+                    serviceStarted = true;
+                    text.Text = "安装完成，请返回网页连接。";
+                    UpdateDetails("资产快读连接服务已启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。");
+                    action.Text = "完成";
+                    return;
+                }
+            }
+
+            Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge? oldBridge = null;
+            if (testOperations?.InspectOldService is not null)
+            {
+                oldBridge = await testOperations.InspectOldService();
+            }
+            else if (testOperations is null)
+            {
+                oldBridge = await Soda.AssetQuickRead.ServiceReadiness.InspectOldBridge(50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            }
+
+            if (oldBridge is not null)
+            {
+                pendingOldBridge = oldBridge;
+                text.Text = "安装完成，检测到旧版连接服务，可切换到新版。";
+                UpdateDetails($"检测到正在运行的旧版资产快读连接服务（版本 {oldBridge.Version}）。\r\n请先在网页取消或完成读取，再点击“切换到新版”并确认。\r\n切换只结束旧版连接服务，已提权读取进程可能继续运行；已保存结果和账户数据保留。");
+                action.Text = "切换到新版";
+                return;
+            }
+
+            await Dispatch(start, true);
             serviceStarted = true;
             text.Text = "安装完成，请返回网页连接。";
             UpdateDetails("资产快读连接服务已启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。");
@@ -139,8 +246,18 @@ internal sealed partial class InstallForm : Form
         }
         catch
         {
-            text.Text = "安装完成，连接服务未启动，请重试启动。";
-            UpdateDetails("连接服务启动失败。请关闭已有资产快读后重试启动。\r\n读取结果和账户数据已保留，无需重新安装。");
+            var portInUse = false;
+            try { portInUse = Soda.AssetQuickRead.ServiceReadiness.PortInUse(50609); } catch { }
+            if (portInUse)
+            {
+                text.Text = "安装完成，连接服务未启动，请重试启动。";
+                UpdateDetails("50609 端口被其他程序或未知服务占用，无法启动连接服务。请关闭占用端口的程序后重试。\r\n工具不会停止未知进程，读取结果和账户数据已保留，无需重新安装。");
+            }
+            else
+            {
+                text.Text = "安装完成，连接服务未启动，请重试启动。";
+                UpdateDetails("连接服务未通过启动与身份检查。请重试；若仍失败，请查看网页诊断。\r\n工具不会停止已有进程，读取结果和账户数据已保留，无需重新安装。");
+            }
             action.Text = "重试启动";
         }
         finally
@@ -152,13 +269,18 @@ internal sealed partial class InstallForm : Form
     private async Task Dispatch(ProcessStartInfo start, bool service)
     {
         if (testOperations is not null) { await testOperations.Dispatch(start); return; }
+        if (service)
+        {
+            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.4", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            return;
+        }
         using var launched = Process.Start(start) ?? throw new IOException("launch_failed");
-        if (!service) return;
-        await Task.WhenAny(launched.WaitForExitAsync(), Task.Delay(700));
-        if (launched.HasExited && launched.ExitCode != 0) throw new IOException("local_service_start_failed");
     }
 }
 internal sealed record FormOperations(string Root,
     Func<IProgress<int>, CancellationToken, Task<string>> Install,
     Func<ProcessStartInfo, Task> Dispatch,
-    Func<Task> Uninstall);
+    Func<Task> Uninstall,
+    Func<Task<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge?>>? InspectOldService = null,
+    Func<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge, Task<bool>>? SwitchOldService = null,
+    Func<bool>? ConfirmSwitch = null);

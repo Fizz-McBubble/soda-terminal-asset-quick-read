@@ -44,6 +44,29 @@ internal sealed class UserRegistration : IRegistration
     }
     internal bool TrustedInstalledVersion(string root, string version) => InstalledVersion(root) == version &&
         store.Read() is { } existing && Published100Upgrade(Path.Combine(root, "versions", InstallEngine.Version, "Soda.AssetQuickRead.Bridge.exe"), existing);
+    internal bool TrustedPublished106Payload(string root)
+    {
+        try
+        {
+            if (!TrustedInstalledVersion(root, "1.0.6")) return false;
+            var previous = Path.Combine(root, "versions", "1.0.6");
+            var catalog = AssetUninstall.Published103Catalog();
+            InstallEngine.NoLinks(previous);
+            var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Stack<string>(); pending.Push(previous);
+            while (pending.TryPop(out var directory))
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    InstallEngine.NoLinks(entry);
+                    if (Directory.Exists(entry)) pending.Push(entry);
+                    else actual.Add(Path.GetRelativePath(previous, entry).Replace('\\', '/'));
+                }
+            if (!actual.SetEquals(catalog.Files.Select(pin => pin.Path))) return false;
+            return catalog.Files.All(pin => digest(InstallEngine.Safe(previous, pin.Path)) == pin.Sha256);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
     internal bool RecoverableInstalledVersion(string root, string version)
     {
         // A missing protocol is repairable; an existing foreign protocol is not.
@@ -94,8 +117,8 @@ internal sealed class UserRegistration : IRegistration
         try
         {
             if (!InstallRegistration.PublishedVersions.Contains(oldVersion)) return false;
-            // Installers 1.0.4-1.0.6 reused the immutable 1.0.3 runtime payload.
-            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion is "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
+            // Installers 1.0.4-1.0.7 reused the immutable 1.0.3 runtime payload.
+            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion is "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" or "1.0.7" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
                 .Where(file => Published100Pins.ContainsKey(file.Path)).ToDictionary(file => file.Path, file => file.Sha256);
             foreach (var pin in pins)
             {
@@ -138,12 +161,19 @@ internal sealed class UserRegistration : IRegistration
             if (!store.Replace(existing, command)) { upgradedFrom = null; throw new IOException("protocol_registration_changed"); }
         }
         else if (store.Read() != existing) throw new IOException("protocol_registration_changed");
+        if (store.Read() != new ProtocolRegistration(Description, "", command, true)) throw new IOException("protocol_registration_verify_failed");
         if (!File.Exists(shortcut))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(shortcut)!);
             using var stream = new FileStream(shortcut, FileMode.CreateNew, FileAccess.Write);
             createdShortcut = true; var bytes = Encoding.UTF8.GetBytes(ShortcutBody); stream.Write(bytes);
         }
+    }
+    internal void VerifyApplied(string executable)
+    {
+        if (store.Read() != new ProtocolRegistration(Description, "", Command(executable), true)) throw new IOException("protocol_registration_verify_failed");
+        InstallEngine.NoLinks(shortcut);
+        if (!File.Exists(shortcut) || File.ReadAllText(shortcut) != ShortcutBody) throw new IOException("start_menu_verify_failed");
     }
     public void Rollback()
     {

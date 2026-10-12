@@ -77,7 +77,7 @@ internal sealed class InstallRegistration : IRegistration
     }
     internal InstallRegistration(string root, UserRegistration protocol, IUninstallStore store, Func<Stream> stub, InstallerDiagnostics? diagnostics = null)
     { this.diagnostics = diagnostics; this.root = Path.GetFullPath(root); this.protocol = protocol; this.store = store; this.stub = stub; }
-    internal static IReadOnlyList<string> PublishedVersions { get; } = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6"];
+    internal static IReadOnlyList<string> PublishedVersions { get; } = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7"];
     internal static string? OldPin(string? version) => version switch
     {
         "1.0.1" => "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B",
@@ -87,11 +87,15 @@ internal sealed class InstallRegistration : IRegistration
         "1.0.5" => "B611351FBDB5029DCABEC33006E2EDB86A77E3A338E4F026D4F8618B021E40E2",
         // Locally delivered 1.0.6 must also upgrade without a manual uninstall.
         "1.0.6" => "3DE0F301D4AC4E3784494823AA1B35CBC31A5BC9D7E4F90BF2C1106E7D03B1CF",
+        "1.0.7" => "EFD73C697FECE39CD1BCF6224E3B19E42D18BD2CC6AFC84298BDB0D5A3FFA08A",
         _ => null
     };
     private string? RecoverableVersion(UninstallRecord? record, string? hash) => record is null && hash is not null
         ? PublishedVersions.FirstOrDefault(version => hash == OldPin(version) && protocol.RecoverableInstalledVersion(root, version))
         : null;
+    private bool Stale106Registration(UninstallRecord? record, string? hash) =>
+        record is { OwnedShape: true, Version: "1.0.6" } && record == Record(root) with { Version = "1.0.6" } &&
+        hash == OldPin("1.0.7") && protocol.TrustedPublished106Payload(root);
     private (UninstallRecord? Record, string? Hash) Inspect(string stage, string incomingHash)
     {
         var record = store.Read(); var expected = Record(root);
@@ -99,12 +103,13 @@ internal sealed class InstallRegistration : IRegistration
         var hash = File.Exists(path) ? InstallEngine.Digest(path) : null;
         var upgrading = record is { OwnedShape: true } && OldPin(record.Version) is not null && record == expected with { Version = record.Version };
         var recovering = RecoverableVersion(record, hash);
+        var stale106 = Stale106Registration(record, hash);
         var knownPin = hash is null ? "absent" : hash == incomingHash ? "current" : PublishedVersions.FirstOrDefault(v => hash == OldPin(v)) ?? "unknown";
         diagnostics?.Identity(stage, record is not null, record?.Version is not null && PublishedVersions.Contains(record.Version) ? record.Version : record?.Version == InstallEngine.Version ? "current" : record is null ? "absent" : "unknown",
-            record?.OwnedShape == true, record == expected, upgrading || recovering is not null, hash is not null, knownPin, hash == incomingHash || upgrading && hash == OldPin(record?.Version) || recovering is not null,
+            record?.OwnedShape == true, record == expected, upgrading || recovering is not null || stale106, hash is not null, knownPin, hash == incomingHash || upgrading && hash == OldPin(record?.Version) || recovering is not null || stale106,
             preflightDone && record != preflightRecord, preflightDone && hash != preflightHash);
         if (record is not null && record != expected && !upgrading) throw new IOException("uninstall_registration_conflict");
-        if (hash is not null && hash != incomingHash && recovering is null && (!upgrading || hash != OldPin(record?.Version))) throw new IOException("uninstaller_file_conflict");
+        if (hash is not null && hash != incomingHash && recovering is null && !stale106 && (!upgrading || hash != OldPin(record?.Version))) throw new IOException("uninstaller_file_conflict");
         return (record, hash);
     }
     public void Preflight(string executable)
@@ -148,7 +153,7 @@ internal sealed class InstallRegistration : IRegistration
             var oldHash = InstallEngine.Digest(path);
             var recovering = RecoverableVersion(previous, oldHash);
             var oldStubHash = OldPin(previous?.Version ?? recovering);
-            if ((!upgrading && recovering is null) || oldHash != oldStubHash)
+            if (((!upgrading && recovering is null) || oldHash != oldStubHash) && !Stale106Registration(previous, oldHash))
                 throw new IOException("uninstaller_file_conflict");
             replacedStub = File.ReadAllBytes(path);
         }
@@ -166,6 +171,10 @@ internal sealed class InstallRegistration : IRegistration
         }
         if (store.Read() != previous) throw new IOException("uninstall_registration_changed");
         store.Write(applied);
+        if (store.Read() != applied) throw new IOException("uninstall_registration_verify_failed");
+        protocol.VerifyApplied(executable);
+        if (!File.Exists(path) || InstallEngine.Digest(path) != stubHash) throw new IOException("uninstaller_file_verify_failed");
+        diagnostics?.Record("register", "verified");
     }
     public void Rollback()
     {

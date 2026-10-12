@@ -22,19 +22,26 @@ internal static class Program
                 return await CaptureWorker.Run(id);
             protocolLaunch = args.Length == 2 && args[0] == "--protocol" && LaunchIdentity.ValidUri(args[1]);
             if (args.Length != 0 && !args.SequenceEqual(new[] { "--serve" }) && !protocolLaunch) return 64;
-            using var instance = new Mutex(true, "Local\\SodaTerminal.AssetQuickRead.50609", out var created);
+            return await RunHost(Port, LaunchIdentity.PipeName, "Local\\SodaTerminal.AssetQuickRead.50609", protocolLaunch);
+        }
+        catch { Console.Error.WriteLine("bridge_start_failed"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 1; }
+    }
+    // Isolated options are reachable only from the synthetic --self-test path.
+    internal static async Task<int> RunHost(int port, string pipeName, string mutexName, bool protocolLaunch = false, bool healthOnly = false, CancellationToken cancellation = default)
+    {
+            using var instance = new Mutex(true, mutexName, out var created);
             if (!created)
             {
                 for (var attempt = 0; attempt < 10; attempt++)
                 {
-                    if (await LaunchIdentity.TrustedExisting()) return 0;
+                    if (await LaunchIdentity.TrustedExisting(port, pipeName)) return 0;
                     await Task.Delay(200);
                 }
                 Console.Error.WriteLine("asset_quick_read_service_conflict"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 73;
             }
-            if (LaunchIdentity.PortOccupied())
+            if (LaunchIdentity.PortOccupied(port))
             {
-                if (await LaunchIdentity.TrustedExisting()) return 0;
+                if (await LaunchIdentity.TrustedExisting(port, pipeName)) return 0;
                 Console.Error.WriteLine("asset_quick_read_port_conflict"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 73;
             }
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
@@ -42,19 +49,19 @@ internal static class Program
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(options =>
             {
-                options.Listen(System.Net.IPAddress.Loopback, Port);
+                options.Listen(System.Net.IPAddress.Loopback, port);
                 options.Limits.MaxRequestBodySize = Security.BodyLimit;
                 options.Limits.MaxConcurrentConnections = 64;
                 options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(10);
             });
             await using var app = builder.Build();
             var bridge = new BridgeService(new ElevatedLauncher());
-            app.Run(context => Handle(context, bridge));
-            using var shutdown = new CancellationTokenSource();
+            app.Run(context => healthOnly && context.Request.Path != "/health" ? RejectTestCapture(context) : Handle(context, bridge));
+            using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdown.Cancel(); };
             await app.StartAsync(shutdown.Token);
-            Console.WriteLine($"Soda Asset Quick Read 1.0.3 listening on 127.0.0.1:{Port}; capture requires an explicit browser start and UAC.");
-            var identityServer = LaunchIdentity.IdentityServer(shutdown.Token);
+            Console.WriteLine($"Soda Asset Quick Read {LaunchIdentity.Version} listening on 127.0.0.1:{port}; capture requires an explicit browser start and UAC.");
+            var identityServer = LaunchIdentity.IdentityServer(shutdown.Token, pipeName);
             try { await app.WaitForShutdownAsync(shutdown.Token); }
             finally
             {
@@ -63,8 +70,11 @@ internal static class Program
                 try { await identityServer; } catch (OperationCanceledException) { }
             }
             return 0;
-        }
-        catch { Console.Error.WriteLine("bridge_start_failed"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 1; }
+    }
+    private static Task RejectTestCapture(HttpContext context)
+    {
+        context.Response.StatusCode = 403;
+        return context.Response.WriteAsJsonAsync(new { error = new { code = "self_test_health_only" } });
     }
     internal static async Task Handle(HttpContext context, BridgeService bridge)
     {

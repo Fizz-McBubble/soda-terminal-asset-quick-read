@@ -4,7 +4,7 @@ Windows x64 独立资产快读工具；与 OCR 扫描器分别安装和运行。
 
 ## 安装与使用
 
-安装器 1.0.7 支持已发布旧版本直接升级与卸载，并始终显示安装详情。安装完成后自动启动普通本机连接服务；点击完成只关闭安装器，不打开网页。启动失败时可重试启动，无需重复安装。安装和普通启动不开始采集，读取运行核心沿用 1.0.3。升级与卸载会核对已发布运行文件及安装器身份；未知文件或身份冲突保留原安装，有限诊断不含本地路径或账户内容。已验证隔离安装检查和真实 1.0.1 旧载荷升级兼容断言；这不等同于对每台机器完成实装验收。安装包仍未签名。
+安装器 1.0.8 与 Bridge 1.0.4：普通连接服务使用无终端窗口的 Windows 主机；启动须通过当前用户管道、EXE/DLL 身份与版本健康检查，同版就绪服务直接复用。检测到默认安装根内具名已发布旧版本时，原生窗口提供“切换到新版”，仅在用户再次明确确认且身份重查通过后结束该旧连接服务；未知目录、文件或进程不会自动停止。切换前须先完成或取消读取，结束连接服务不保证已提权读取子进程一同结束。安装登记写后核对，失败回滚；只对精确匹配的旧登记和已发布载荷组合提供恢复，不据此推断历史登记漂移根因。安装和普通启动不开始采集，完成按钮只关闭安装器，不打开第二个网页。隔离合成检查通过 98 项 Bridge 与 818 项安装器断言，包含真实无窗口 apphost、确认/取消、身份竞争及完整载荷；这不是实际用户安装或暖升级验收。安装包仍未签名，系统与浏览器信誉提示可能继续出现。
 
 仅使用本仓库 Releases 中具名版本的独立安装器，核对 SHA256。首次安装在用户点击安装后，联网从固定社区 commit 的公开 GitHub 地址下载三份协议输入并核对 SHA256，随后从临时目录事务安装到本机；安装器不内嵌这些JSON或游戏图像。取消、网络或哈希错误不会完成安装。安装和普通启动不开始采集；打开 Soda Terminal 的资产快读入口，连接本机工具、选择接收账户、填写游戏安装目录并阅读风险后，才开始本轮读取。管理员提示用于本地网络驱动。先完成游戏更新与首次着色器编译，完全退出客户端，等待工具就绪后正常启动并登录；就绪后最多读取180秒，收到所需三类响应则提前停止。
 
@@ -30,7 +30,7 @@ GitHub Actions提供手动触发的公开.NET桥接与安装器源码编译，SD
 .\Build-AssetQuickReadInstaller.ps1 -BridgeOutputDirectory .\build-new -OutputDirectory .\installer-new -RunTests
 ~~~
 
-Prepare-Upstream.ps1 从公开固定 commit 下载源码与协议输入并校验 SHA256；Build-Probe 从官方固定版本取得 WinDivert 并校验哈希。已有缓存可使用 -Offline；运行时不更新协议。所有下载仅用于构建，源码投影不包含协议原始JSON、驱动二进制或游戏图像。Build-AssetQuickReadInstaller.ps1 默认用 .NET SDK 生成压缩单EXE安装器（内嵌整理后的运行文件，排除三个协议JSON），不需要NSIS；只有显式指定 -NsisPath 才使用可选NSIS封装。-DotNetPath 可指定已有SDK。桥接使用 ASP.NET Core 8 Kestrel，本机启动协议为 soda-asset-quick-read://launch。Package-AssetQuickRead.ps1 是开发者本地运行包准备脚本，可复制本地协议输入，不能将其结果直接当作公开安装器或公开发行zip。Bridge 可用 --self-test 执行合成检查；Probe 使用 Test-PackagedProbe.ps1，不需要真实账号输入。
+Prepare-Upstream.ps1 从公开固定 commit 下载源码与协议输入并校验 SHA256；Build-Probe 从官方固定版本取得 WinDivert 并校验哈希。已有缓存可使用 -Offline；运行时不更新协议。所有下载仅用于构建，源码投影不包含协议原始JSON、驱动二进制或游戏图像。Build-AssetQuickReadInstaller.ps1 默认用 .NET SDK 生成压缩单EXE安装器（内嵌整理后的运行文件，排除三个协议JSON），不需要NSIS；只有显式指定 -NsisPath 才使用可选NSIS封装。-DotNetPath 可指定已有SDK。桥接使用 ASP.NET Core 8 Kestrel，本机启动协议为 soda-asset-quick-read://launch。Package-AssetQuickRead.ps1 是开发者本地运行包准备脚本，可复制本地协议输入，不能将其结果直接当作公开安装器或公开发行zip。Bridge 合成检查通过 Build-Bridge.ps1 -RunTests 执行；脚本在隔离版本目录运行 --self-test 后将相同产物移动至 companion，不额外复制运行时；Probe 使用 Test-PackagedProbe.ps1，不需要真实账号输入。
 
 构建目录和临时目录可用 SODA_DERIVED_ROOT、SODA_BUILD_TEMP_DIRECTORY 或显式脚本参数指定；公开脚本默认使用检出内 .cache/soda-derived，不依赖作者机器路径。固定 Cargo.lock 的完整 Rust 依赖许可、版权和标准库版权已保存在 installer/Rust-DEPENDENCY-NOTICES.txt 与 installer/Rust-STDLIB-COPYRIGHT.html，并随安装器分发。依赖变更后先准备固定上游，在已缓存依赖下运行 Build-RustDependencyNotices.ps1 -OutputDirectory <全新目录>，审阅并更新这两份文档；安装器会验证 Cargo.lock 哈希，不接受过期通知。修改运行库后须复核并更新源码内固定运行文件哈希，再重新构建。
 

@@ -1,6 +1,22 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory, [string]$ReusePublishedPayloadDirectory)
 $ErrorActionPreference='Stop'
+function Test-LockedRustNotice([string]$LockPath, [string]$NoticePath) {
+    if (-not (Test-Path -LiteralPath $NoticePath)) { return $false }
+    $header = [IO.File]::ReadAllLines($NoticePath) | Select-Object -First 2 | Select-Object -Last 1
+    if ($header -cnotmatch '^Cargo.lock SHA256: ([A-F0-9]{64})$') { return $false }
+    $expected = $Matches[1]
+    $raw = [IO.File]::ReadAllBytes($LockPath)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($raw)
+    $lf = $text.Replace("`r`n", "`n")
+    # Git may check out LF or CRLF. Only those exact representations of
+    # identical content are equivalent; dependency/source changes still fail.
+    $identities = @([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($raw)))
+    foreach ($content in @($lf, $lf.Replace("`n", "`r`n"))) {
+        $identities += [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($content)))
+    }
+    return $expected -cin $identities
+}
 $derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
 if (-not $TemporaryDirectory) { $TemporaryDirectory = if ($env:SODA_BUILD_TEMP_DIRECTORY) { $env:SODA_BUILD_TEMP_DIRECTORY } else { Join-Path $derivedRoot 'temp\asset-quick-read-installer' } }
 $buildEnvironmentBefore = @{}
@@ -27,12 +43,16 @@ if ($ReusePublishedPayloadDirectory) {
     $archive=Join-Path $ReusePublishedPayloadDirectory 'setup/payload/asset-quick-read.zip'
     if((Get-FileHash -LiteralPath $archive).Hash -cne $oldCatalog.archiveSha256){throw 'Published payload archive mismatch.'}
     $catalogFiles=$oldCatalog.files
+    $packagedBridgeVersion='1.0.3' # The reuse branch is locked to the published 1.0.3 payload above.
     # NSIS reads the existing immutable archive directly; no runtime copy is made.
     if(-not $NsisPath){throw 'Published payload reuse requires the pinned NSIS wrapper.'}
     $payloadDirectory=Join-Path $output 'setup/payload'; [IO.Directory]::CreateDirectory($payloadDirectory) | Out-Null
 } else {
 $privatePackage=Join-Path $output 'private-complete-package'
 & (Join-Path $PSScriptRoot 'Package-AssetQuickRead.ps1') -BridgeOutputDirectory $BridgeOutputDirectory -DestinationDirectory $privatePackage -RuntimeDirectory $RuntimeDirectory
+$packagedBridgePath=Join-Path $privatePackage 'Soda.AssetQuickRead.Bridge.dll'
+$packagedBridgeVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($packagedBridgePath).ProductVersion.Split('+')[0]
+if(-not $packagedBridgeVersion){throw 'Packaged Bridge version metadata is missing.'}
 $payloadRoot=Join-Path $output 'public-embedded-payload'; [IO.Directory]::CreateDirectory($payloadRoot) | Out-Null
 $remote=@('runtime/assets/manifest.json','runtime/assets/datamine.json','runtime/assets/nap.json')
 foreach($file in Get-ChildItem -LiteralPath $privatePackage -File -Recurse){
@@ -42,8 +62,7 @@ foreach($file in Get-ChildItem -LiteralPath $privatePackage -File -Recurse){
 }
 $licenses=Join-Path $payloadRoot 'licenses'; [IO.Directory]::CreateDirectory($licenses) | Out-Null
 $rustNotice=Join-Path $PSScriptRoot 'installer/Rust-DEPENDENCY-NOTICES.txt'
-$lockHash=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'Cargo.lock')).Hash
-if(-not(Test-Path -LiteralPath $rustNotice) -or -not ([IO.File]::ReadAllText($rustNotice).Contains("Cargo.lock SHA256: $lockHash"))){throw 'Complete locked Rust notices missing or stale; run Build-RustDependencyNotices.ps1 offline first.'}
+if(-not (Test-LockedRustNotice (Join-Path $PSScriptRoot 'Cargo.lock') $rustNotice)){throw 'Complete locked Rust notices missing or stale; run Build-RustDependencyNotices.ps1 offline first.'}
 foreach($name in @('Rust-DEPENDENCY-NOTICES.txt','Rust-STDLIB-COPYRIGHT.html')){
     $noticeSource=Join-Path $PSScriptRoot ('installer/'+$name)
     if(-not(Test-Path -LiteralPath $noticeSource)){throw "Required complete notice missing: $name"}
@@ -104,7 +123,7 @@ if($NsisPath){
     & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" "/DUNINSTALLER_EXE=$uninstallStub" "/DINSTALLER_VERSION=$version" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
     if($LASTEXITCODE -ne 0){throw 'Compressed installer build failed.'}
 }else{[IO.File]::Copy($inner,$final,$false)}
-[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion='1.0.3';installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=2;protocolSourceTimeoutSeconds=20;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
+[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=2;protocolSourceTimeoutSeconds=20;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
 
 } finally {
     foreach ($name in $buildEnvironmentBefore.Keys) {
