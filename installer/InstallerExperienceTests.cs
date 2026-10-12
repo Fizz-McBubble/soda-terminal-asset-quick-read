@@ -144,6 +144,11 @@ internal static class InstallerExperienceTests
             Check(panel.Controls.OfType<TextBox>().Single().ReadOnly);
             Check(panel.Controls.OfType<TextBox>().Single().Visible);
             Check(panel.Controls.OfType<TextBox>().Single().ScrollBars == ScrollBars.None);
+            var visibleDetails = panel.Controls.OfType<TextBox>().Single();
+            var detailHeight = TextRenderer.MeasureText(visibleDetails.Text, visibleDetails.Font,
+                new Size(visibleDetails.ClientSize.Width, int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding).Height;
+            Check(detailHeight <= visibleDetails.ClientSize.Height);
             Check(!panel.Controls.OfType<TextBox>().Single().TabStop && panel.Controls.OfType<TextBox>().Single().SelectionLength == 0);
             Check(!panel.Controls.OfType<LinkLabel>().Any());
             foreach (Control control in panel.Controls) Check(control.Right <= panel.Width && control.Bottom <= panel.Height);
@@ -229,6 +234,22 @@ internal static class InstallerExperienceTests
             Button(form, "取消").PerformClick(); Pump(() => Has(form, "重新安装"));
             Check(protocol.Value is null && store.Value is null);
             Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
+        }
+        {
+            var committedRoot = Path.Combine(baseRoot, "committed-install-handlers");
+            var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            CancellationToken committedToken = default;
+            using var form = new InstallForm(true, new FormOperations(committedRoot,
+                async (reporter, token) => { committedToken = token; reporter.Report(100); await pending.Task;
+                    return Path.Combine(committedRoot, "versions", catalog.Version); },
+                _ => Task.CompletedTask, () => Task.CompletedTask));
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => form.Controls.OfType<Panel>()
+                .SelectMany(panel => panel.Controls.OfType<Label>()).Any(label => label.Text == "正在完成安装…"));
+            Check(!Button(form, "取消").Enabled);
+            form.Close(); Check(!form.IsDisposed && !committedToken.IsCancellationRequested);
+            pending.SetResult(); Pump(() => Has(form, "完成"));
+            Check(!committedToken.IsCancellationRequested);
+            Button(form, "完成").PerformClick(); Check(form.IsDisposed);
         }
         return passed;
         void Check(bool condition) { if (!condition) throw new Exception("button_handler_assertion"); passed++; }

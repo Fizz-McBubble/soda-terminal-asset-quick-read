@@ -5,11 +5,11 @@ namespace Soda.AssetQuickRead.Setup;
 
 internal sealed record CatalogFile(string Path, long Size, string Sha256, bool Download = false);
 internal sealed record Catalog(string Version, string ArchiveSha256, CatalogFile[] Files);
-internal interface IRegistration { void Preflight(string executable) { } void Apply(string executable); void Rollback(); }
+internal interface IRegistration { void Preflight(string executable) { } void Apply(string executable); void Rollback(); string? PreviousRegisteredVersion => null; }
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.0.8";
+    internal const string Version = "1.0.9";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)
@@ -57,11 +57,12 @@ internal static class InstallEngine
         if (Directory.Exists(final))
         {
             Verify(final, catalog); cancellation.ThrowIfCancellationRequested();
-            try { registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe")); }
+            try { registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe")); cancellation.ThrowIfCancellationRequested(); progress(100); }
             catch { registration.Rollback(); throw; }
-            progress(100); return final;
+            VersionRetention.RetireOlderVersions(root, Version, registration);
+            return final;
         }
-        Directory.CreateDirectory(staging); var promoted = false;
+        Directory.CreateDirectory(staging); var promoted = false; var committed = false;
         try
         {
             diagnostics?.Record("copy");
@@ -114,12 +115,21 @@ internal static class InstallEngine
             Directory.Move(staging, final); promoted = true;
             cancellation.ThrowIfCancellationRequested();
             diagnostics?.Record("register"); registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe"));
-            progress(100); return final;
+            cancellation.ThrowIfCancellationRequested();
+            progress(100);
+            // Registration and verification are now committed. Cancellation during best-effort
+            // retirement cannot roll back the new version after older versions have been retired.
+            committed = true;
+            VersionRetention.RetireOlderVersions(root, Version, registration);
+            return final;
         }
         catch
         {
-            registration.Rollback();
-            RemoveOwned(promoted ? final : staging, versions);
+            if (!committed)
+            {
+                registration.Rollback();
+                RemoveOwned(promoted ? final : staging, versions);
+            }
             throw;
         }
     }
@@ -127,7 +137,7 @@ internal static class InstallEngine
     {
         // Only the three fixed protocol identities may be borrowed; old versions are read-only.
         ProtocolDownload.Url(pin);
-        foreach (var version in new[] { "1.0.3", "1.0.2", "1.0.1", "1.0.0" })
+        foreach (var version in InstallRegistration.PublishedVersions.Reverse())
         {
             try
             {

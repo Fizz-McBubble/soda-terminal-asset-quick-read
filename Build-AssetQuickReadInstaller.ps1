@@ -37,13 +37,14 @@ New-Item -ItemType Directory -Path $output | Out-Null
 if ($ReusePublishedPayloadDirectory) {
     # Reuse immutable reviewed payload bytes; only the installer changes.
     $oldCatalogPath=Join-Path $ReusePublishedPayloadDirectory 'catalog.json'
-    $publishedCatalog=Join-Path $PSScriptRoot 'installer/published-1.0.3-catalog.json'
-    if((Get-FileHash -LiteralPath $oldCatalogPath).Hash -cne (Get-FileHash -LiteralPath $publishedCatalog).Hash){throw 'Published payload catalog mismatch.'}
     $oldCatalog=Get-Content -LiteralPath $oldCatalogPath -Raw | ConvertFrom-Json
+    if ($oldCatalog.version -cnotin @('1.0.3','1.0.8')) { throw 'Published payload version unsupported.' }
+    $publishedCatalog=Join-Path $PSScriptRoot ('installer/published-'+$oldCatalog.version+'-catalog.json')
+    if((Get-FileHash -LiteralPath $oldCatalogPath).Hash -cne (Get-FileHash -LiteralPath $publishedCatalog).Hash){throw 'Published payload catalog mismatch.'}
     $archive=Join-Path $ReusePublishedPayloadDirectory 'setup/payload/asset-quick-read.zip'
     if((Get-FileHash -LiteralPath $archive).Hash -cne $oldCatalog.archiveSha256){throw 'Published payload archive mismatch.'}
     $catalogFiles=$oldCatalog.files
-    $packagedBridgeVersion='1.0.3' # The reuse branch is locked to the published 1.0.3 payload above.
+    $packagedBridgeVersion=if($oldCatalog.version -ceq '1.0.8'){'1.0.4'}else{'1.0.3'} # Identity is locked by the complete published catalog.
     # NSIS reads the existing immutable archive directly; no runtime copy is made.
     if(-not $NsisPath){throw 'Published payload reuse requires the pinned NSIS wrapper.'}
     $payloadDirectory=Join-Path $output 'setup/payload'; [IO.Directory]::CreateDirectory($payloadDirectory) | Out-Null
@@ -123,7 +124,7 @@ if($NsisPath){
     & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" "/DUNINSTALLER_EXE=$uninstallStub" "/DINSTALLER_VERSION=$version" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
     if($LASTEXITCODE -ne 0){throw 'Compressed installer build failed.'}
 }else{[IO.File]::Copy($inner,$final,$false)}
-[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=2;protocolSourceTimeoutSeconds=20;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
+[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=4;protocolHeaderTimeoutSeconds=30;protocolIdleTimeoutSeconds=30;protocolAttemptTimeoutSeconds=300;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
 
 } finally {
     foreach ($name in $buildEnvironmentBefore.Keys) {

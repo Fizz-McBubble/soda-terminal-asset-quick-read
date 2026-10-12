@@ -144,10 +144,13 @@ internal static class Tests
                 var rejectedRoot = Path.Combine(root, "download-failure"); var rejectedRegistration = new Registration();
                 Refuses(() => InstallEngine.Install(realArchive, realCatalog, rejectedRoot, rejectedRegistration, CancellationToken.None, _ => { }, (_, _) => throw new IOException("synthetic_download_failure")), "download_failure");
                 Check(rejectedRegistration.Applied == 0 && !Directory.Exists(Path.Combine(rejectedRoot, "versions", InstallEngine.Version)), "download_failure_no_registration_no_install");
+                passed += ProtocolDownloadTests.Run(Path.Combine(root, "protocol-download"), File.ReadAllBytes(InstallEngine.Safe(privatePayload, "runtime/assets/manifest.json")));
                 passed += InstallerExperienceTests.RunFullPackage(Path.Combine(root, "full-uninstall"), realArchive, realCatalog, privatePayload);
             }
             passed += InstallerExperienceTests.Run(root, archive, catalog);
             passed += UninstallVersionTests.Run(root);
+            passed += InstallerFeedbackTests.Run(Path.Combine(root, "installer-feedback.json"), true);
+            passed += VersionRetentionTests.Run(Path.Combine(root, "version-retention.json"), true);
             var staleFixture = Environment.GetEnvironmentVariable("SODA_ASSET_QUICK_READ_STALE_REGISTRATION_FIXTURE");
             if (staleFixture is not null) passed += StaleRegistrationTests.Run(root, staleFixture);
             File.WriteAllText(evidencePath, JsonSerializer.Serialize(new { suite = "asset-quick-read-installer", passed, syntheticRoot = root, published100FixtureVerified = legacyFixture is not null, registryWrites = 0, captureStarted = false, uacRequested = false, exitCode = 0 })); return 0;

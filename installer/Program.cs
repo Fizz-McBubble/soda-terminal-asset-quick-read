@@ -8,7 +8,9 @@ internal static class Program
     {
         if (args.Length == 2 && args[0] == "--inspect-install") return InstallInspection.Run(args[1]);
         if (args.Length == 2 && args[0] == "--self-test") return Tests.Run(args[1]);
+        if (args.Length == 2 && args[0] == "--feedback-self-test") { ApplicationConfiguration.Initialize(); return InstallerFeedbackTests.Run(args[1]); }
         if (args.Length == 3 && args[0] == "--upgrade-self-test") return UpgradeIdentityTests.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--retention-self-test") return VersionRetentionTests.Run(args[1]);
         if (args.Length > 0 && args[0] == "--uninstall") return AssetUninstall.Run(args);
         if (args.Length != 0) return 64;
         ApplicationConfiguration.Initialize(); Application.Run(new InstallForm()); return 0;
@@ -20,6 +22,7 @@ internal sealed partial class InstallForm : Form
     private string? installed;
     private bool serviceStarted;
     private bool serviceStarting;
+    private bool installationCommitted;
     private readonly bool previewOnly;
     private readonly FormOperations? testOperations;
     private Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge? pendingOldBridge;
@@ -34,8 +37,8 @@ internal sealed partial class InstallForm : Form
             SetInstalledVersion(current, HasInstallationTraces(InstallEngine.DefaultRoot, new RegistryUninstallStore().Read()));
         }
         action.Click += async (_, _) => await InstallOrOpen();
-        cancel.Click += (_, _) => { if (running is not null) { running.Cancel(); text.Text = "正在取消安装…"; cancel.Enabled = false; } else Close(); };
-        FormClosing += (_, e) => { if (running is not null || serviceStarting) { e.Cancel = true; running?.Cancel(); } };
+        cancel.Click += (_, _) => { if (running is not null) { if (installationCommitted) return; running.Cancel(); text.Text = "正在取消安装…"; cancel.Enabled = false; } else Close(); };
+        FormClosing += (_, e) => { if (running is not null || serviceStarting) { e.Cancel = true; if (!installationCommitted) running?.Cancel(); } };
     }
     // UI discovery is separate from uninstall authority. Removal still validates
     // the catalog, exact registration and uninstaller identities.
@@ -73,8 +76,8 @@ internal sealed partial class InstallForm : Form
             await StartInstalledService();
             return;
         }
-        running = new CancellationTokenSource(); action.Enabled = false; action.Visible = false; cancel.Text = "取消";
-        uninstall.Enabled = false;
+        running = new CancellationTokenSource(); installationCommitted = false; action.Enabled = false; action.Visible = false; cancel.Text = "取消";
+        uninstall.Enabled = false; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null;
         progress.Visible = true; progress.Value = 0; progress.Indeterminate = true;
         var token = running.Token;
         var diagnostics = new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"), phase =>
@@ -84,7 +87,7 @@ internal sealed partial class InstallForm : Form
                 { "protocol" => "正在获取并校验所需数据…", "verify" => "正在校验安装文件…", "register" => "正在添加工具入口…", "copy" => "正在写入安装文件…", _ => text.Text }; });
         });
         diagnostics.Record("prepare");
-        var reporter = new Progress<int>(value => { if (running is null) return; progress.Indeterminate = false; progress.Value = Math.Clamp(value, 0, 100); });
+        var reporter = new Progress<int>(value => { if (running is null) return; progress.Indeterminate = false; progress.Value = Math.Clamp(value, 0, 100); if (value >= 100) { installationCommitted = true; cancel.Enabled = false; text.Text = "正在完成安装…"; } });
         string? temporary = null;
         try
         {
@@ -117,8 +120,8 @@ internal sealed partial class InstallForm : Form
             uninstall.Visible = true;
             await StartInstalledService();
         }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { diagnostics.Record("cancelled", "installer_cancelled"); text.Text = "安装已取消，可以重新安装。"; UpdateDetails("本次新建安装文件已回滚，已有版本和读取结果保留。"); progress.Visible = false; action.Text = "重新安装"; }
-        catch (Exception error) { var code = InstallerDiagnostics.Code(error); diagnostics.Record("failed", code); ShowInstallError(code); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { diagnostics.Record("cancelled", "installer_cancelled"); text.Text = "安装已取消，可以重新安装。"; UpdateDetails("本次新建安装文件已回滚，已有版本和读取结果保留。"); progress.Visible = false; action.Text = "重新安装"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; }
+        catch (Exception error) { var code = InstallerDiagnostics.Code(error); diagnostics.Record("failed", code); ShowInstallError(code, diagnostics); }
         finally
         {
             if (temporary is not null && Directory.Exists(temporary))
@@ -283,4 +286,6 @@ internal sealed record FormOperations(string Root,
     Func<Task> Uninstall,
     Func<Task<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge?>>? InspectOldService = null,
     Func<Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge, Task<bool>>? SwitchOldService = null,
-    Func<bool>? ConfirmSwitch = null);
+    Func<bool>? ConfirmSwitch = null,
+    Action<string>? LaunchBrowser = null,
+    Action<string>? SetClipboard = null);

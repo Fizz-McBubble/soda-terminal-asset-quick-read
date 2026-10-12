@@ -9,9 +9,12 @@ internal sealed partial class InstallForm
     private readonly Button action = new();
     private readonly Button cancel = new();
     private readonly Button uninstall = new();
+    private readonly Button feedback = new();
     private readonly Panel card = new();
     private readonly TextBox details = new();
     private static readonly Color Purple = Color.FromArgb(107, 89, 148);
+    private InstallerFeedbackReport? lastFeedbackReport;
+    private string? lastFeedbackUrl;
 
     private void InitializeInterface()
     {
@@ -45,13 +48,15 @@ internal sealed partial class InstallForm
         details.Multiline = true; details.ScrollBars = ScrollBars.None; details.TabIndex = 3;
         details.TabStop = false;
         details.AccessibleName = "安装详情";
-        UpdateDetails("安装到当前用户目录，并添加开始菜单入口。安装时下载并校验数据，请保持网络连接。\r\n开始读取需在网页确认并允许管理员权限。");
+        UpdateDetails("安装到当前用户目录，并添加开始菜单入口。安装后保留当前与上一版本以供回退，自动清理更早的已验证程序文件。\r\n开始读取需在网页确认并允许管理员权限。");
         card.Controls.AddRange([text, progress, details]); Controls.Add(card);
         StyleButton(action, "开始安装", true); action.TabIndex = 0;
         StyleButton(cancel, "关闭", false); cancel.TabIndex = 1;
         StyleButton(uninstall, "卸载", false); uninstall.TabIndex = 4; uninstall.Visible = false;
         uninstall.Click += async (_, _) => await UninstallAsync();
-        Controls.AddRange([action, cancel, uninstall]); AcceptButton = action; CancelButton = cancel;
+        StyleButton(feedback, "反馈安装问题", false); feedback.TabIndex = 2; feedback.Visible = false;
+        feedback.Click += (_, _) => OnFeedbackClicked();
+        Controls.AddRange([action, cancel, uninstall, feedback]); AcceptButton = action; CancelButton = cancel;
         AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
         ResumeLayout(false); PerformLayout(); LayoutFooter();
         Shown += (_, _) => { LayoutFooter(); details.Select(0, 0); ActiveControl = action.Visible && action.Enabled ? action : cancel; };
@@ -60,7 +65,7 @@ internal sealed partial class InstallForm
 
     private static void StyleButton(Button button, string label, bool primary)
     {
-        button.Text = label; button.Size = new Size(primary ? 124 : 84, 36);
+        button.Text = label; button.Size = new Size(primary ? 124 : (label.Length > 4 ? 110 : 84), 36);
         button.BackColor = primary ? Purple : Color.White;
         button.ForeColor = primary ? Color.White : Color.FromArgb(108, 101, 120);
         button.FlatStyle = FlatStyle.Flat; button.Cursor = Cursors.Hand; button.UseVisualStyleBackColor = false;
@@ -75,6 +80,7 @@ internal sealed partial class InstallForm
         action.Location = new Point(ClientSize.Width - Unit(32) - action.Width, ClientSize.Height - Unit(58));
         cancel.Location = new Point(Unit(32), ClientSize.Height - Unit(58));
         uninstall.Location = new Point(Unit(126), ClientSize.Height - Unit(58));
+        feedback.Location = new Point(action.Left - Unit(10) - feedback.Width, ClientSize.Height - Unit(58));
     }
     private void UpdateDetails(string message) { details.Text = message; details.Select(0, 0); }
     internal void SetInstalledVersion(string? current, bool installationTraces = false)
@@ -111,12 +117,72 @@ internal sealed partial class InstallForm
         catch (Exception error) { text.Text = "卸载未完成，请关闭资产快读后重试。"; UpdateDetails(error.Message); progress.Visible = false; }
         finally { progress.Indeterminate = false; running.Dispose(); running = null; action.Enabled = cancel.Enabled = uninstall.Enabled = true; }
     }
-    private void ShowInstallError(string message)
+    internal void ShowInstallError(string message, InstallerDiagnostics? diagnostics = null)
     {
         var code = InstallerDiagnostics.Code(new IOException(message));
         text.Text = InstallerDiagnostics.Message(code);
-        UpdateDetails("诊断代码：" + code + "\r\n诊断记录：%LOCALAPPDATA%/SodaTerminal/AssetQuickRead/installer-diagnostics/latest.json\r\n已有版本、读取结果和账户已保留。");
+        UpdateDetails("诊断代码：" + code + "\r\n安装详情已保存在本机。\r\n可点击“反馈安装问题”提交有限诊断。\r\n已有版本、读取结果和账户已保留。");
         progress.Visible = false; action.Text = "重试";
+        lastFeedbackReport = diagnostics?.BuildSafeReport(code) ?? InstallerFeedback.CreateSafeReport("failed", code, 0, []);
+        lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport);
+        feedback.Visible = true;
+    }
+
+    private void OnFeedbackClicked()
+    {
+        if (lastFeedbackReport is null || lastFeedbackUrl is null) return;
+        var launched = false;
+        try
+        {
+            if (testOperations?.LaunchBrowser is not null)
+            {
+                testOperations.LaunchBrowser(lastFeedbackUrl);
+                launched = true;
+            }
+            else
+            {
+                launched = InstallerFeedback.TryLaunchBrowser(lastFeedbackUrl);
+            }
+        }
+        catch
+        {
+            launched = false;
+        }
+
+        if (launched)
+        {
+            UpdateDetails("已在浏览器中打开反馈页面。\r\n若浏览器未打开，可重试或访问官网。\r\n已有版本、读取结果和账户已保留。");
+            return;
+        }
+
+        // Browser launch fallback: copy safe report to clipboard
+        var safeJson = InstallerFeedback.SerializeReport(lastFeedbackReport);
+        var copied = false;
+        try
+        {
+            if (testOperations?.SetClipboard is not null)
+            {
+                testOperations.SetClipboard(safeJson);
+                copied = true;
+            }
+            else
+            {
+                copied = InstallerFeedback.TrySetClipboard(safeJson);
+            }
+        }
+        catch
+        {
+            copied = false;
+        }
+
+        if (copied)
+        {
+            UpdateDetails("未能打开浏览器，已将故障报告复制到剪贴板，请访问官网反馈。\r\n已有版本、读取结果和账户已保留。");
+        }
+        else
+        {
+            UpdateDetails("未能打开浏览器与剪贴板，请稍后重试。\r\n已有版本、读取结果和账户已保留。");
+        }
     }
 
     // Internal fixture does not run install, protocol, browser or service actions.
@@ -124,16 +190,16 @@ internal sealed partial class InstallForm
     {
         switch (state)
         {
-            case "initial": break;
-            case "preparing": text.Text = "正在准备组件…"; progress.Visible = true; progress.Indeterminate = true; action.Visible = false; cancel.Text = "取消"; break;
-            case "progress": text.Text = "正在安装资产快读…"; progress.Visible = true; progress.Value = 47; action.Visible = false; cancel.Text = "取消"; break;
-            case "starting": text.Text = "安装完成，正在启动连接服务…"; progress.Visible = true; progress.Value = 100; action.Visible = false; cancel.Text = "关闭"; cancel.Enabled = false; break;
+            case "initial": feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; break;
+            case "preparing": text.Text = "正在准备组件…"; progress.Visible = true; progress.Indeterminate = true; action.Visible = false; cancel.Text = "取消"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; break;
+            case "progress": text.Text = "正在安装资产快读…"; progress.Visible = true; progress.Value = 47; action.Visible = false; cancel.Text = "取消"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; break;
+            case "starting": text.Text = "安装完成，正在启动连接服务…"; progress.Visible = true; progress.Value = 100; action.Visible = false; cancel.Text = "关闭"; cancel.Enabled = false; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; break;
             case "completion":
-            case "started": text.Text = "安装完成，请返回网页连接。"; progress.Visible = true; progress.Value = 100; action.Text = "完成";
+            case "started": text.Text = "安装完成，请返回网页连接。"; progress.Visible = true; progress.Value = 100; action.Text = "完成"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null;
                 UpdateDetails("资产快读连接服务已启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。"); break;
-            case "start-error": text.Text = "安装完成，连接服务未启动，请重试启动。"; progress.Visible = true; progress.Value = 100; action.Text = "重试启动";
+            case "start-error": text.Text = "安装完成，连接服务未启动，请重试启动。"; progress.Visible = true; progress.Value = 100; action.Text = "重试启动"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null;
                 UpdateDetails("连接服务启动失败。请关闭已有资产快读后重试启动。\r\n读取结果和账户数据已保留，无需重新安装。"); break;
-            case "cancelled": text.Text = "安装已取消，可以重新安装。"; action.Text = "重新安装"; break;
+            case "cancelled": text.Text = "安装已取消，可以重新安装。"; action.Text = "重新安装"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; break;
             case "error": ShowInstallError("synthetic_download_failure"); break;
             default: throw new InvalidOperationException("test_preview_state_invalid");
         }

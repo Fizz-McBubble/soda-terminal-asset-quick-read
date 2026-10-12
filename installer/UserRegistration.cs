@@ -117,8 +117,8 @@ internal sealed class UserRegistration : IRegistration
         try
         {
             if (!InstallRegistration.PublishedVersions.Contains(oldVersion)) return false;
-            // Installers 1.0.4-1.0.7 reused the immutable 1.0.3 runtime payload.
-            var pins = oldVersion == "1.0.0" ? Published100Pins : (oldVersion is "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" or "1.0.7" ? AssetUninstall.Published103Catalog() : oldVersion == "1.0.2" ? AssetUninstall.Published102Catalog() : AssetUninstall.Published101Catalog()).Files
+            // Each version uses its actually published runtime; 1.0.8 updated the Bridge.
+            var pins = oldVersion == "1.0.0" ? Published100Pins : AssetUninstall.PublishedCatalog(oldVersion).Files
                 .Where(file => Published100Pins.ContainsKey(file.Path)).ToDictionary(file => file.Path, file => file.Sha256);
             foreach (var pin in pins)
             {

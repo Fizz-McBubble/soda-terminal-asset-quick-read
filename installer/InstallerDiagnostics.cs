@@ -9,6 +9,8 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly object gate = new();
     private readonly List<object> events = new();
+    private readonly List<InstallerAttemptReport> inMemoryAttempts = new();
+    private string currentPhase = "prepare";
     private static readonly Lazy<string?> ExecutableHash = new(() =>
     {
         try { return Environment.ProcessPath is { } path ? InstallEngine.Digest(path) : null; }
@@ -57,8 +59,26 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         phaseChanged?.Invoke(phase);
         lock (gate)
         {
+            if (phase is not ("failed" or "cancelled" or "complete")) currentPhase = phase;
+            if (phase == "protocol" && item is >= 0 and <= 2 && source is "github_raw" or "github_contents" or "verified_local" && InstallerFeedback.WhitelistedAttemptCodes.Contains(code))
+            {
+                if (inMemoryAttempts.Count == 16) inMemoryAttempts.RemoveAt(0);
+                inMemoryAttempts.Add(new InstallerAttemptReport(item.Value, source, code, Math.Clamp(clock.ElapsedMilliseconds, 0, 3600000)));
+            }
             if (events.Count < 80) events.Add(new { phase, code, item, source, elapsedMs = clock.ElapsedMilliseconds });
             Persist();
+        }
+    }
+    internal InstallerFeedbackReport BuildSafeReport(string finalCode)
+    {
+        lock (gate)
+        {
+            return InstallerFeedback.CreateSafeReport(
+                currentPhase,
+                finalCode,
+                clock.ElapsedMilliseconds,
+                inMemoryAttempts
+            );
         }
     }
 }
