@@ -124,7 +124,7 @@ if($NsisPath){
     & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" "/DUNINSTALLER_EXE=$uninstallStub" "/DINSTALLER_VERSION=$version" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
     if($LASTEXITCODE -ne 0){throw 'Compressed installer build failed.'}
 }else{[IO.File]::Copy($inner,$final,$false)}
-[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=4;protocolHeaderTimeoutSeconds=30;protocolIdleTimeoutSeconds=30;protocolAttemptTimeoutSeconds=300;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
+[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=6;protocolArchiveFallback=$true;protocolArchiveSize=556844;protocolArchiveSha256='39EB5B5C3D2AC9E5F207280902112FF0DE08B38966FDD49B25D7BCB92F8EB640';protocolHeaderTimeoutSeconds=30;protocolIdleTimeoutSeconds=30;protocolAttemptTimeoutSeconds=300;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
 
 } finally {
     foreach ($name in $buildEnvironmentBefore.Keys) {

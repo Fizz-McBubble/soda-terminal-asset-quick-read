@@ -78,7 +78,7 @@ internal sealed class InstallRegistration : IRegistration
     }
     internal InstallRegistration(string root, UserRegistration protocol, IUninstallStore store, Func<Stream> stub, InstallerDiagnostics? diagnostics = null)
     { this.diagnostics = diagnostics; this.root = Path.GetFullPath(root); this.protocol = protocol; this.store = store; this.stub = stub; }
-    internal static IReadOnlyList<string> PublishedVersions { get; } = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7", "1.0.8"];
+    internal static IReadOnlyList<string> PublishedVersions { get; } = ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9"];
     internal static string? OldPin(string? version) => version switch
     {
         "1.0.1" => "B217E640A656FB5B5B6BAF4167DE0BAD2364164847C347F5FF4FEA86C0FECC5B",
@@ -90,6 +90,7 @@ internal sealed class InstallRegistration : IRegistration
         "1.0.6" => "3DE0F301D4AC4E3784494823AA1B35CBC31A5BC9D7E4F90BF2C1106E7D03B1CF",
         "1.0.7" => "EFD73C697FECE39CD1BCF6224E3B19E42D18BD2CC6AFC84298BDB0D5A3FFA08A",
         "1.0.8" => "33B93EFAED51BCAB9112D2546F196DFFFD94D3CF56E62B07726A56F644E74EA7",
+        "1.0.9" => "0B260AC2EBD14302D23596AD40A92C011F96697C3DD262C09FB358F3817E813D",
         _ => null
     };
     private string? RecoverableVersion(UninstallRecord? record, string? hash) => record is null && hash is not null

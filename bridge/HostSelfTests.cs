@@ -180,7 +180,11 @@ internal static class HostSelfTests
             using var oldResponse = await http.PostAsync($"http://127.0.0.1:{port}/jobs", new StringContent("{}"));
             Check(oldResponse.StatusCode == HttpStatusCode.Forbidden, "legacy_fixture_cannot_capture");
             Check(!ServiceReadiness.MatchesPublishedBridgePin("0.0.0", selfExeHash, selfDllHash) &&
-                !ServiceReadiness.MatchesPublishedBridgePin("1.0.3", selfExeHash, selfDllHash), "test_pins_never_become_production_pins");
+                !ServiceReadiness.MatchesPublishedBridgePin("1.0.3", selfExeHash, selfDllHash) &&
+                !ServiceReadiness.MatchesPublishedBridgePin("1.0.4", selfExeHash, selfDllHash), "test_pins_never_become_production_pins");
+            Check(ServiceReadiness.MatchesPublishedBridgePin("1.0.4", "7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"), "bridge_104_exact_pin_verified");
+            Check(!ServiceReadiness.MatchesPublishedBridgePin("1.0.4", "0000000000000000000000000000000000000000000000000000000000000000", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"), "bridge_104_corrupted_exe_refused");
+            Check(!ServiceReadiness.MatchesPublishedBridgePin("1.0.5", "7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"), "bridge_unknown_future_version_refused");
             foreach (var altered in new[] {
                 inspected! with { StartTimeTicks = inspected.StartTimeTicks + 1 },
                 inspected with { ProcessId = Environment.ProcessId },

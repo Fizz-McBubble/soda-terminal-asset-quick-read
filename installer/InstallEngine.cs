@@ -9,7 +9,7 @@ internal interface IRegistration { void Preflight(string executable) { } void Ap
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.0.9";
+    internal const string Version = "1.0.10";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)
@@ -87,6 +87,7 @@ internal static class InstallEngine
             var protocolFiles = catalog.Files.Where(x => x.Download).ToArray();
             diagnostics?.Record("protocol");
             var progressGate = new object();
+            using var fallbackScope = new ProtocolFallbackScope();
             try { Parallel.ForEach(Enumerable.Range(0, protocolFiles.Length), new ParallelOptions { CancellationToken = cancellation, MaxDegreeOfParallelism = 3 }, index =>
             {
                 var pin = protocolFiles[index];
@@ -95,7 +96,7 @@ internal static class InstallEngine
                 var reused = ReuseProtocol(root, pin);
                 if (reused is not null) diagnostics?.Record("protocol", "verified", index, "verified_local");
                 using var input = reused ?? (download is not null ? download(pin, cancellation)
-                    : ProtocolDownload.Open(pin, cancellation, (source, code) => diagnostics?.Record("protocol", code, index, source)));
+                    : ProtocolDownload.Open(pin, cancellation, (source, code) => diagnostics?.Record("protocol", code, index, source), fallbackScope: fallbackScope));
                 using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write))
                 {
                     var buffer = new byte[65536]; int count; long received = 0;

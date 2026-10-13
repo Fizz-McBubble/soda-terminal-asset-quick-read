@@ -54,13 +54,13 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     internal void Record(string phase, string code = "started", int? item = null, string? source = null)
     {
         if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "complete" or "failed" or "cancelled")) return;
-        if (source is not (null or "github_raw" or "github_contents" or "verified_local")) return;
+        if (source is not (null or "github_raw" or "github_contents" or "verified_local" or "github_archive")) return;
         code = code == "started" || code == "request_started" || code == "verified" || code == "completed" ? code : Code(new IOException(code));
         phaseChanged?.Invoke(phase);
         lock (gate)
         {
             if (phase is not ("failed" or "cancelled" or "complete")) currentPhase = phase;
-            if (phase == "protocol" && item is >= 0 and <= 2 && source is "github_raw" or "github_contents" or "verified_local" && InstallerFeedback.WhitelistedAttemptCodes.Contains(code))
+            if (phase == "protocol" && item is >= 0 and <= 2 && source is "github_raw" or "github_contents" or "verified_local" or "github_archive" && InstallerFeedback.WhitelistedAttemptCodes.Contains(code))
             {
                 if (inMemoryAttempts.Count == 16) inMemoryAttempts.RemoveAt(0);
                 inMemoryAttempts.Add(new InstallerAttemptReport(item.Value, source, code, Math.Clamp(clock.ElapsedMilliseconds, 0, 3600000)));

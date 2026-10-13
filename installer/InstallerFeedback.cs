@@ -80,12 +80,14 @@ internal static class InstallerFeedback
         "github_raw",
         "github_contents",
         "verified_local",
+        "github_archive",
     };
 
     internal static readonly HashSet<string> WhitelistedAttemptCodes = new(StringComparer.Ordinal)
     {
         "request_started",
         "verified",
+        "protocol_source_rejected",
         "protocol_download_timeout",
         "protocol_download_connection_failed",
         "protocol_download_failed",

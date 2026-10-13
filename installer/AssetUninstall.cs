@@ -69,6 +69,8 @@ internal static class AssetUninstall
         "1.0.2" => Published102Catalog(),
         "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" or "1.0.7" => Published103Catalog() with { Version = version },
         "1.0.8" => Published108Catalog(),
+        // 1.0.9 reused the exact published 1.0.8 archive and complete file catalog.
+        "1.0.9" => Published108Catalog() with { Version = version },
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 

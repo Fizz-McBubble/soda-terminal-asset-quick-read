@@ -11,6 +11,7 @@ internal static class Program
         if (args.Length == 2 && args[0] == "--feedback-self-test") { ApplicationConfiguration.Initialize(); return InstallerFeedbackTests.Run(args[1]); }
         if (args.Length == 3 && args[0] == "--upgrade-self-test") return UpgradeIdentityTests.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--retention-self-test") return VersionRetentionTests.Run(args[1]);
+        if (args.Length == 4 && args[0] == "--protocol-self-test") return ProtocolDownloadTests.RunStandalone(args[1], args[2], args[3]);
         if (args.Length > 0 && args[0] == "--uninstall") return AssetUninstall.Run(args);
         if (args.Length != 0) return 64;
         ApplicationConfiguration.Initialize(); Application.Run(new InstallForm()); return 0;
