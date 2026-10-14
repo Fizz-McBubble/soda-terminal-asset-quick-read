@@ -146,6 +146,8 @@ internal static class Tests
                 Check(rejectedRegistration.Applied == 0 && !Directory.Exists(Path.Combine(rejectedRoot, "versions", InstallEngine.Version)), "download_failure_no_registration_no_install");
                 passed += ProtocolDownloadTests.Run(Path.Combine(root, "protocol-download"), File.ReadAllBytes(InstallEngine.Safe(privatePayload, "runtime/assets/manifest.json")));
                 passed += InstallerExperienceTests.RunFullPackage(Path.Combine(root, "full-uninstall"), realArchive, realCatalog, privatePayload);
+                var previousPackage = Environment.GetEnvironmentVariable("SODA_ASSET_QUICK_READ_PREVIOUS_PACKAGE");
+                if (previousPackage is not null) passed += InstallerExperienceTests.RunPublishedUpgrade(Path.Combine(root, "published-upgrade"), realArchive, realCatalog, privatePayload, previousPackage);
             }
             passed += InstallerExperienceTests.Run(root, archive, catalog);
             passed += UninstallVersionTests.Run(root);

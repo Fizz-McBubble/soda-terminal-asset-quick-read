@@ -22,6 +22,7 @@ internal static class ServiceReadiness
             ["1.0.2"] = ("40A19313E4018247202CB31ECE1F48237FA68E6142F1D083504BE96F2A185BCA", "F04507F60A592595D570AB86F41C1A755A2420E61D2965EA5EE2C5CCD06A4448"),
             ["1.0.3"] = ("E91778191B5A067B9C02729F55414510E66FB6F42927CFA0ACFDE5D08713008B", "39AAEA7A34CBADE61D0AE797228814A01C978796212FEEA41F9765C04260706E"),
             ["1.0.4"] = ("7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"),
+            ["1.0.5"] = ("E876BA58EF0AD1FCDD8D0EA086456AA0257A26AA65CBD5438A4794371DB85361", "E1BA0B98936B3563D911026459FCE2C60B23328B3E3E23BDBF32CA5B73CFA4AB"),
         };
 
     internal static bool MatchesPublishedBridgePin(string version, string exeSha256, string dllSha256)
@@ -40,6 +41,7 @@ internal static class ServiceReadiness
         "1.0.0" or "1.0.1" or "1.0.2" => installationVersion,
         "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" or "1.0.7" => "1.0.3",
         "1.0.8" or "1.0.9" => "1.0.4",
+        "1.0.10" => "1.0.5",
         _ => null
     };
     // Explicit per-call synthetic identity. No mutable process-wide trust hook.

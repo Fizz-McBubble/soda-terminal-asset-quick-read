@@ -17,6 +17,7 @@ VIProductVersion "${INSTALLER_VERSION}.0"
 VIAddVersionKey "ProductName" "Soda Terminal · 资产快读"
 VIAddVersionKey "FileDescription" "资产快读独立安装程序"
 VIAddVersionKey "FileVersion" "${INSTALLER_VERSION}"
+VIAddVersionKey "ProductVersion" "${INSTALLER_VERSION}"
 VIAddVersionKey "LegalCopyright" "Soda Terminal contributors; NSIS contributors"
 !include "FileFunc.nsh"
 Section

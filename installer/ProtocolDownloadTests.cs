@@ -293,7 +293,9 @@ internal static class ProtocolDownloadTests
         var record = File.ReadAllText(Path.Combine(root, "diagnostic/latest.json"));
         Check(!record.Contains("secret") && !record.Contains("private-user") && record.Contains("installer_local_operation_failed"), "redacted_diagnostic");
         Check(InstallerDiagnostics.Message("protocol_registration_conflict").Contains("入口") && !InstallerDiagnostics.Message("protocol_registration_conflict").Contains("网络"), "local_failure_not_network");
-        Check(InstallEngine.Version == "1.0.10", "current_version");
+        Check(InstallEngine.Version == "1.1.0", "current_version");
+        Check(Soda.AssetQuickRead.ServiceReadiness.MatchesPublishedBridgePin("1.0.5", "E876BA58EF0AD1FCDD8D0EA086456AA0257A26AA65CBD5438A4794371DB85361", "E1BA0B98936B3563D911026459FCE2C60B23328B3E3E23BDBF32CA5B73CFA4AB"), "published_1010_bridge_identity");
+        Check(!Soda.AssetQuickRead.ServiceReadiness.MatchesPublishedBridgePin("1.0.5", "7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"), "older_bridge_cannot_claim_1010");
         return passed;
     }
     private sealed class Fake(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> response) : HttpMessageHandler
