@@ -18,7 +18,7 @@ internal sealed class UserRegistration : IRegistration
     private readonly string shortcut;
     private readonly Func<string, string> digest;
     internal const string ShortcutBody = "[InternetShortcut]\r\nURL=soda-asset-quick-read://launch\r\n";
-    private bool createdKey, createdShortcut;
+    private bool createdKey, createdShortcut, trustedStale110;
     private string? command;
     private ProtocolRegistration? upgradedFrom;
     // Identities from the actually published 1.0.0 installer, SHA256 F5BF32058F813C8677A4B1DFB54A836EDED219483AFE5589032D4B0DDD544B5E.
@@ -67,6 +67,32 @@ internal sealed class UserRegistration : IRegistration
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
     }
+    internal void TrustStale110ForTransaction(bool verified) => trustedStale110 = verified;
+    internal bool TrustedStale110Payload(string root)
+    {
+        try
+        {
+            var existing = store.Read();
+            if (existing != new ProtocolRegistration(Description, "", Command(Path.Combine(root, "versions", "1.0.6", "Soda.AssetQuickRead.Bridge.exe")), true) ||
+                Directory.Exists(Path.Combine(root, "versions", "1.0.6"))) return false;
+            var previous = Path.Combine(root, "versions", "1.1.0");
+            var catalog = AssetUninstall.PublishedCatalog("1.1.0");
+            InstallEngine.NoLinks(previous);
+            var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pending = new Stack<string>(); pending.Push(previous);
+            while (pending.TryPop(out var directory))
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    InstallEngine.NoLinks(entry);
+                    if (Directory.Exists(entry)) pending.Push(entry);
+                    else actual.Add(Path.GetRelativePath(previous, entry).Replace('\\', '/'));
+                }
+            return actual.SetEquals(catalog.Files.Select(pin => pin.Path)) &&
+                catalog.Files.All(pin => digest(InstallEngine.Safe(previous, pin.Path)) == pin.Sha256);
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
     internal bool RecoverableInstalledVersion(string root, string version)
     {
         // A missing protocol is repairable; an existing foreign protocol is not.
@@ -110,7 +136,8 @@ internal sealed class UserRegistration : IRegistration
         if (oldVersion is null) return false;
         var previous = Path.Combine(versions, oldVersion);
         if (existing.Command != Command(Path.Combine(previous, "Soda.AssetQuickRead.Bridge.exe"))) return false;
-        return PublishedRuntimeMatches(previous, oldVersion);
+        return PublishedRuntimeMatches(previous, oldVersion) ||
+            trustedStale110 && oldVersion == "1.0.6" && TrustedStale110Payload(Path.GetDirectoryName(versions)!);
     }
     private bool PublishedRuntimeMatches(string previous, string oldVersion)
     {

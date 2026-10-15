@@ -57,15 +57,18 @@ internal static class InstallerExperienceTests
     internal static int RunPublishedUpgrade(string baseRoot, string archive, Catalog catalog, string privatePayload, string publishedPackage)
     {
         var passed = 0;
-        void Check(bool value, string name) { if (!value) throw new Exception("published_1010_upgrade_" + name); passed++; }
-        var oldCatalog = AssetUninstall.PublishedCatalog("1.0.10");
+        using var publishedCatalog = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(publishedPackage, "catalog.json")));
+        var oldVersion = publishedCatalog.RootElement.GetProperty("version").GetString();
+        if (oldVersion is not ("1.0.10" or "1.1.0")) throw new Exception("published_upgrade_fixture_version");
+        void Check(bool value, string name) { if (!value) throw new Exception("published_" + oldVersion + "_upgrade_" + name); passed++; }
+        var oldCatalog = AssetUninstall.PublishedCatalog(oldVersion);
         var oldStub = Path.Combine(publishedPackage, "uninstall", "Soda.AssetQuickRead.Setup.exe");
-        Check(InstallEngine.Digest(oldStub) == InstallRegistration.OldPin("1.0.10"), "actual_old_uninstaller_pin");
+        Check(InstallEngine.Digest(oldStub) == InstallRegistration.OldPin(oldVersion), "actual_old_uninstaller_pin");
         Check(InstallEngine.Digest(Path.Combine(publishedPackage, "setup", "payload", "asset-quick-read.zip")) == oldCatalog.ArchiveSha256, "actual_old_archive_pin");
         foreach (var fail in new[] { false, true })
         {
             var install = Path.Combine(baseRoot, fail ? "rollback" : "upgrade");
-            var legacy = Path.Combine(install, "versions", "1.0.10");
+            var legacy = Path.Combine(install, "versions", oldVersion);
             foreach (var pin in oldCatalog.Files)
             {
                 var source = InstallEngine.Safe(Path.Combine(publishedPackage, pin.Download ? "private-complete-package" : "public-embedded-payload"), pin.Path);
@@ -77,10 +80,10 @@ internal static class InstallerExperienceTests
             var keep = Path.Combine(install, "jobs", "keep.json"); Directory.CreateDirectory(Path.GetDirectoryName(keep)!); File.WriteAllText(keep, "SYNTHETIC_RESULT_PRESERVE");
             var oldCommand = UserRegistration.Command(Path.Combine(legacy, "Soda.AssetQuickRead.Bridge.exe"));
             var protocol = new ProtocolStore { Value = new(UserRegistration.Description, "", oldCommand, true) };
-            var store = new UninstallStore { Value = InstallRegistration.Record(Path.GetFullPath(install)) with { Version = "1.0.10" }, FailOnce = fail };
+            var store = new UninstallStore { Value = InstallRegistration.Record(Path.GetFullPath(install)) with { Version = oldVersion }, FailOnce = fail };
             var oldRecord = store.Value;
             var registration = new UserRegistration(protocol, Path.Combine(install, "synthetic-start-menu.url"));
-            Check(registration.TrustedInstalledVersion(install, "1.0.10"), "actual_old_launch_identity");
+            Check(registration.TrustedInstalledVersion(install, oldVersion), "actual_old_launch_identity");
             var entries = new InstallRegistration(install, registration, store, InstallRegistration.OpenUninstaller);
             try
             {
@@ -88,15 +91,53 @@ internal static class InstallerExperienceTests
                 Check(!fail, "failure_must_rollback");
                 InstallEngine.Verify(target, catalog); passed++;
                 Check(store.Value == InstallRegistration.Record(Path.GetFullPath(install)) && protocol.Value?.Command == UserRegistration.Command(Path.Combine(target, "Soda.AssetQuickRead.Bridge.exe")), "new_registration_identity");
-                Check(entries.PreviousRegisteredVersion == "1.0.10", "previous_version_retained");
+                Check(entries.PreviousRegisteredVersion == oldVersion, "previous_version_retained");
             }
             catch (IOException error) when (fail && error.Message == "synthetic_registration_failure")
             {
                 Check(store.Value == oldRecord && protocol.Value?.Command == oldCommand, "registration_rollback");
-                Check(InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) == InstallRegistration.OldPin("1.0.10") && !Directory.Exists(Path.Combine(install, "versions", InstallEngine.Version)), "payload_rollback");
+                Check(InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) == InstallRegistration.OldPin(oldVersion) && !Directory.Exists(Path.Combine(install, "versions", InstallEngine.Version)), "payload_rollback");
             }
             InstallEngine.Verify(legacy, oldCatalog); passed++;
             Check(File.ReadAllText(keep) == "SYNTHETIC_RESULT_PRESERVE", "old_results_preserved");
+        }
+        if (oldVersion == "1.1.0")
+        {
+            // A published 1.1.0 payload/stub may coexist with a dangling
+            // 1.0.6 protocol and uninstall record after an interrupted upgrade.
+            foreach (var fail in new[] { false, true })
+            {
+                var install = Path.Combine(baseRoot, fail ? "stale-110-rollback" : "stale-110-upgrade");
+                var published = Path.Combine(install, "versions", oldVersion);
+                foreach (var pin in oldCatalog.Files)
+                {
+                    var source = InstallEngine.Safe(Path.Combine(publishedPackage, pin.Download ? "private-complete-package" : "public-embedded-payload"), pin.Path);
+                    var target = InstallEngine.Safe(published, pin.Path);
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(source, target);
+                }
+                File.Copy(oldStub, Path.Combine(install, "uninstall.exe"));
+                var keep = Path.Combine(install, "jobs", "keep.json"); Directory.CreateDirectory(Path.GetDirectoryName(keep)!); File.WriteAllText(keep, "PRESERVE");
+                var staleCommand = UserRegistration.Command(Path.Combine(install, "versions", "1.0.6", "Soda.AssetQuickRead.Bridge.exe"));
+                var protocol = new ProtocolStore { Value = new(UserRegistration.Description, "", staleCommand, true) };
+                var store = new UninstallStore { Value = InstallRegistration.Record(Path.GetFullPath(install)) with { Version = "1.0.6" }, FailOnce = fail };
+                var oldRecord = store.Value;
+                var registration = new UserRegistration(protocol, Path.Combine(install, "synthetic-start-menu.url"));
+                var entries = new InstallRegistration(install, registration, store, InstallRegistration.OpenUninstaller);
+                try
+                {
+                    var target = InstallEngine.Install(archive, catalog, install, entries, CancellationToken.None, _ => { }, (pin, _) => File.OpenRead(InstallEngine.Safe(privatePayload, pin.Path)));
+                    Check(!fail, "stale_110_failure_must_rollback");
+                    InstallEngine.Verify(target, catalog); passed++;
+                    Check(protocol.Value?.Command == UserRegistration.Command(Path.Combine(target, "Soda.AssetQuickRead.Bridge.exe")) && store.Value == InstallRegistration.Record(Path.GetFullPath(install)), "stale_110_registration_repaired");
+                }
+                catch (IOException error) when (fail && error.Message == "synthetic_registration_failure")
+                {
+                    Check(protocol.Value?.Command == staleCommand && store.Value == oldRecord && !Directory.Exists(Path.Combine(install, "versions", InstallEngine.Version)), "stale_110_rollback_identity");
+                    Check(InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) == InstallRegistration.OldPin("1.1.0"), "stale_110_rollback_stub");
+                }
+                InstallEngine.Verify(published, oldCatalog); passed++;
+                Check(File.ReadAllText(keep) == "PRESERVE", "stale_110_results_preserved");
+            }
         }
         return passed;
     }

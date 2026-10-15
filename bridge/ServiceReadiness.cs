@@ -11,6 +11,10 @@ namespace Soda.AssetQuickRead;
 // cannot establish ownership of the service we are about to report as ready.
 internal static class ServiceReadiness
 {
+    // The identity pipe and mutex stay stable across ports: one installed
+    // product owns one service, even when Windows excludes the legacy port.
+    internal static readonly int[] ServicePorts = [50609, 46009, 46010];
+    internal static int[] CandidatePorts(int port) => port == ServicePorts[0] ? ServicePorts : [port];
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
 
@@ -23,6 +27,7 @@ internal static class ServiceReadiness
             ["1.0.3"] = ("E91778191B5A067B9C02729F55414510E66FB6F42927CFA0ACFDE5D08713008B", "39AAEA7A34CBADE61D0AE797228814A01C978796212FEEA41F9765C04260706E"),
             ["1.0.4"] = ("7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"),
             ["1.0.5"] = ("E876BA58EF0AD1FCDD8D0EA086456AA0257A26AA65CBD5438A4794371DB85361", "E1BA0B98936B3563D911026459FCE2C60B23328B3E3E23BDBF32CA5B73CFA4AB"),
+            ["1.0.6"] = ("DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B", "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F"),
         };
 
     internal static bool MatchesPublishedBridgePin(string version, string exeSha256, string dllSha256)
@@ -42,6 +47,7 @@ internal static class ServiceReadiness
         "1.0.3" or "1.0.4" or "1.0.5" or "1.0.6" or "1.0.7" => "1.0.3",
         "1.0.8" or "1.0.9" => "1.0.4",
         "1.0.10" => "1.0.5",
+        "1.1.0" => "1.0.6",
         _ => null
     };
     // Explicit per-call synthetic identity. No mutable process-wide trust hook.
@@ -140,7 +146,7 @@ internal static class ServiceReadiness
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             timeout.CancelAfter(1000);
             using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
-            http.DefaultRequestHeaders.Host = "127.0.0.1:50609";
+            http.DefaultRequestHeaders.Host = $"127.0.0.1:{(ServicePorts.Contains(port) ? port : ServicePorts[0])}";
             using var response = await http.GetAsync($"http://127.0.0.1:{port}/health", HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode) return false;
             // The owned service emits a small fixed public health record. Bound
@@ -165,13 +171,15 @@ internal static class ServiceReadiness
         if (start.UseShellExecute || !start.CreateNoWindow || start.WindowStyle != ProcessWindowStyle.Hidden) throw new IOException("windowless_service_launch_required");
         var expectedDirectory = Path.GetDirectoryName(Path.GetFullPath(start.FileName))!;
         using var timeout = new CancellationTokenSource(readinessTimeout ?? TimeSpan.FromSeconds(8));
-        if (await TrustedExisting(expectedDirectory, version, port, pipeName, timeout.Token)) return;
-        if (PortInUse(port)) throw new IOException("local_service_port_conflict");
+        foreach (var candidate in CandidatePorts(port))
+            if (await TrustedExisting(expectedDirectory, version, candidate, pipeName, timeout.Token)) return;
         using var launched = (launch ?? Process.Start)(start) ?? throw new IOException("launch_failed");
         while (!timeout.IsCancellationRequested)
         {
-            if (launched.HasExited && launched.ExitCode != 0) throw new IOException("local_service_start_failed");
-            if (await TrustedExisting(expectedDirectory, version, port, pipeName, timeout.Token)) return;
+            if (launched.HasExited && launched.ExitCode != 0)
+                throw new IOException(launched.ExitCode == 73 ? "local_service_bind_or_identity_unavailable" : "local_service_start_failed");
+            foreach (var candidate in CandidatePorts(port))
+                if (await TrustedExisting(expectedDirectory, version, candidate, pipeName, timeout.Token)) return;
             try { await Task.Delay(100, timeout.Token); } catch (OperationCanceledException) { break; }
         }
         // Never terminate an existing or newly launched service on a timeout.

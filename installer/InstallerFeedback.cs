@@ -38,6 +38,7 @@ internal static class InstallerFeedback
         "protocol",
         "verify",
         "register",
+        "service_start",
         "failed",
     };
 
@@ -45,6 +46,9 @@ internal static class InstallerFeedback
     {
         "installer_access_denied",
         "installer_local_operation_failed",
+        "local_service_bind_or_identity_unavailable",
+        "local_service_readiness_timeout",
+        "local_service_start_failed",
         "protocol_source_rejected",
         "payload_hash_mismatch",
         "catalog_identity_rejected",

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Net.Sockets;
 using System.Text.Json;
 namespace Soda.AssetQuickRead;
 
@@ -27,23 +28,53 @@ internal static class Program
         catch { Console.Error.WriteLine("bridge_start_failed"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 1; }
     }
     // Isolated options are reachable only from the synthetic --self-test path.
-    internal static async Task<int> RunHost(int port, string pipeName, string mutexName, bool protocolLaunch = false, bool healthOnly = false, CancellationToken cancellation = default)
+    internal static async Task<int> RunHost(int port, string pipeName, string mutexName, bool protocolLaunch = false, bool healthOnly = false, CancellationToken cancellation = default, int[]? isolatedCandidates = null)
     {
-            using var instance = new Mutex(true, mutexName, out var created);
-            if (!created)
+        using var instance = new Mutex(true, mutexName, out var created);
+        if (isolatedCandidates is not null && (!healthOnly || port == Port ||
+            !pipeName.StartsWith("SodaTerminal.AssetQuickRead.HostSelfTest.", StringComparison.Ordinal) ||
+            !mutexName.StartsWith("Local\\SodaTerminal.AssetQuickRead.HostSelfTest.", StringComparison.Ordinal) ||
+            isolatedCandidates.Length is < 1 or > 3 || isolatedCandidates[0] != port ||
+            isolatedCandidates.Any(candidate => candidate is < 1024 or > 65535 || ServiceReadiness.ServicePorts.Contains(candidate))))
+            throw new InvalidOperationException("isolated_host_candidates_required");
+        var candidates = isolatedCandidates ?? ServiceReadiness.CandidatePorts(port);
+        if (!created)
+        {
+            using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            wait.CancelAfter(TimeSpan.FromSeconds(8));
+            while (!wait.IsCancellationRequested)
             {
-                for (var attempt = 0; attempt < 10; attempt++)
-                {
-                    if (await LaunchIdentity.TrustedExisting(port, pipeName)) return 0;
-                    await Task.Delay(200);
-                }
-                Console.Error.WriteLine("asset_quick_read_service_conflict"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 73;
+                foreach (var candidate in candidates)
+                    if (await LaunchIdentity.TrustedExisting(candidate, pipeName)) return 0;
+                try { await Task.Delay(150, wait.Token); } catch (OperationCanceledException) { break; }
             }
-            if (LaunchIdentity.PortOccupied(port))
+            Console.Error.WriteLine("asset_quick_read_identity_unavailable");
+            if (protocolLaunch) LaunchIdentity.ShowLaunchFailure();
+            return 73;
+        }
+        foreach (var candidate in candidates)
+        {
+            try { return await Serve(candidate, pipeName, healthOnly, cancellation); }
+            catch (BindUnavailableException error)
             {
-                if (await LaunchIdentity.TrustedExisting(port, pipeName)) return 0;
-                Console.Error.WriteLine("asset_quick_read_port_conflict"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 73;
+                Console.Error.WriteLine($"asset_quick_read_bind_failed:{candidate}:{error.Code}");
             }
+        }
+        Console.Error.WriteLine("asset_quick_read_bind_unavailable");
+        if (protocolLaunch) LaunchIdentity.ShowLaunchFailure();
+        return 73;
+    }
+    private static bool IsBindFailure(Exception error) => BindCode(error) is SocketError.AddressAlreadyInUse or SocketError.AccessDenied;
+    private sealed class BindUnavailableException(SocketError code, Exception inner) : IOException("local_service_bind_unavailable", inner)
+    { internal SocketError Code { get; } = code; }
+    private static SocketError? BindCode(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+            if (current is SocketException socket) return socket.SocketErrorCode;
+        return null;
+    }
+    private static async Task<int> Serve(int port, string pipeName, bool healthOnly, CancellationToken cancellation)
+    {
             var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
             builder.Configuration.Sources.Clear();
             builder.Logging.ClearProviders();
@@ -59,7 +90,8 @@ internal static class Program
             app.Run(context => healthOnly && context.Request.Path != "/health" ? RejectTestCapture(context) : Handle(context, bridge));
             using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdown.Cancel(); };
-            await app.StartAsync(shutdown.Token);
+            try { await app.StartAsync(shutdown.Token); }
+            catch (Exception error) when (IsBindFailure(error)) { throw new BindUnavailableException(BindCode(error)!.Value, error); }
             Console.WriteLine($"Soda Asset Quick Read {LaunchIdentity.Version} listening on 127.0.0.1:{port}; capture requires an explicit browser start and UAC.");
             var identityServer = LaunchIdentity.IdentityServer(shutdown.Token, pipeName);
             try { await app.WaitForShutdownAsync(shutdown.Token); }

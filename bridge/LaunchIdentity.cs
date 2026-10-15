@@ -5,11 +5,11 @@ namespace Soda.AssetQuickRead;
 
 internal static class LaunchIdentity
 {
-    internal const string Version = "1.0.4";
+    internal const string Version = "1.0.7";
     internal const string PipeName = "SodaTerminal.AssetQuickRead.Identity.50609";
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
-    internal static void ShowLaunchFailure() => MessageBoxW(IntPtr.Zero, "资产快读未能启动。50609 端口或启动身份已被其他服务占用，或本机服务启动失败。\n请关闭你确认的旧版资产快读后重试；工具不会停止其他进程。", "Soda Terminal 资产快读", 0x10);
+    internal static void ShowLaunchFailure() => MessageBoxW(IntPtr.Zero, "资产快读连接服务未能启动。可能是本机监听地址不可用，也可能是服务身份或启动检查未完成。\n请在安装器中重试启动并查看本机诊断；工具不会停止其他进程。", "Soda Terminal 资产快读", 0x10);
     internal static bool ValidUri(string value) => value is "soda-asset-quick-read://launch" or "soda-asset-quick-read://launch/";
     internal static bool SameFiles(string expected, string observed) => ServiceReadiness.SameFiles(expected, observed);
     internal static bool PortOccupied(int port = Program.Port) => IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Any(x => x.Port == port);

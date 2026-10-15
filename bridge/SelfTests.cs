@@ -85,6 +85,10 @@ internal static class SelfTests
                 finally { webIdentityLifetime.Cancel(); try { await webIdentity; } catch (OperationCanceledException) { } await web.StopAsync(); }
             }
             Check(Security.ValidHost("127.0.0.1:50609"), "host_exact");
+            Check(ServiceReadiness.CandidatePorts(Program.Port).SequenceEqual([50609, 46009, 46010]) &&
+                ServiceReadiness.CandidatePorts(46011).SequenceEqual([46011]), "fixed_fallback_ports_and_isolated_test_boundary");
+            Check(Security.ValidHost("127.0.0.1:46009") && Security.ValidHost("127.0.0.1:46010") &&
+                !Security.ValidHost("127.0.0.1:46011"), "only_fixed_fallback_hosts_allowed");
             Check(!Security.ValidHost("localhost:50609") && !Security.ValidHost("evil.test:50609") && !Security.ValidHost("127.0.0.1:50609.evil"), "host_rebinding");
             Check(Security.ValidOrigin(Origin) && Security.ValidOrigin("https://sodaterminal.com"), "origin_allowlist");
             Check(Security.ValidOrigin("http://127.0.0.1:5173") && !Security.ValidOrigin("http://127.0.0.1:5174") && !Security.ValidOrigin("http://127.0.0.1:5173/"), "alternate_dev_origin_exact");

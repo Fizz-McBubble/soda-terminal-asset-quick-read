@@ -152,6 +152,31 @@ internal static class HostSelfTests
             Check(response.StatusCode == HttpStatusCode.Forbidden, "fixture_cannot_capture");
             await StopFixture();
 
+            // A real bind failure on an isolated test listener must reach the
+            // second fixed candidate without closing the foreign listener.
+            var occupied = new TcpListener(IPAddress.Loopback, 0); occupied.Start();
+            try
+            {
+                var occupiedPort = ((IPEndPoint)occupied.LocalEndpoint).Port;
+                var spare = new TcpListener(IPAddress.Loopback, 0); spare.Start();
+                var sparePort = ((IPEndPoint)spare.LocalEndpoint).Port; spare.Stop();
+                var fallbackId = Guid.NewGuid();
+                using var fallbackLifetime = new CancellationTokenSource();
+                var fallback = Program.RunHost(occupiedPort, Pipe(fallbackId), Mutex(fallbackId),
+                    healthOnly: true, cancellation: fallbackLifetime.Token, isolatedCandidates: [occupiedPort, sparePort]);
+                try
+                {
+                    var fallbackDeadline = DateTime.UtcNow.AddSeconds(5);
+                    while (DateTime.UtcNow < fallbackDeadline &&
+                           !await ServiceReadiness.TrustedExisting(AppContext.BaseDirectory, LaunchIdentity.Version, sparePort, Pipe(fallbackId)))
+                        await Task.Delay(50);
+                    Check(await ServiceReadiness.TrustedExisting(AppContext.BaseDirectory, LaunchIdentity.Version, sparePort, Pipe(fallbackId)), "actual_bind_fallback_ready");
+                    Check(ServiceReadiness.PortInUse(occupiedPort), "foreign_listener_untouched");
+                }
+                finally { fallbackLifetime.Cancel(); await fallback; }
+            }
+            finally { occupied.Stop(); }
+
             // Legacy bridge coexistence, user confirmation, race rejection, and switch tests
             string selfExeHash, selfDllHash;
             using (var s = File.OpenRead(self)) selfExeHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(s));
@@ -177,6 +202,11 @@ internal static class HostSelfTests
             try { await ServiceReadiness.Start(Start("health-only"), LaunchIdentity.Version, port, Pipe(id), TimeSpan.FromMilliseconds(500), Launch); }
             catch (IOException) { autoStartFailed = true; }
             Check(autoStartFailed && !legacyProcess.HasExited, "before_confirmation_zero_old_termination");
+            // The synthetic 500 ms caller timeout does not cancel its own
+            // 8-second duplicate host. Retire only that fixture before the
+            // explicit switch; the verified legacy listener stays alive.
+            await StopFixture();
+            Check(!legacyProcess.HasExited, "timed_out_fixture_cleanup_keeps_old_service");
             using var oldResponse = await http.PostAsync($"http://127.0.0.1:{port}/jobs", new StringContent("{}"));
             Check(oldResponse.StatusCode == HttpStatusCode.Forbidden, "legacy_fixture_cannot_capture");
             Check(!ServiceReadiness.MatchesPublishedBridgePin("0.0.0", selfExeHash, selfDllHash) &&
@@ -209,10 +239,12 @@ internal static class HostSelfTests
             var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.7"), ExecutablePath = Path.Combine(junction, "versions", "1.0.7", "Soda.AssetQuickRead.Bridge.exe") };
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: linked) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(linkedRecord, test: linked) && !legacyProcess.HasExited, "linked_root_refused_and_preserved");
+            Console.Error.WriteLine("isolated_host_test_stage:switch_service");
             await ServiceReadiness.SwitchService(inspected!, Start("health-only"), LaunchIdentity.Version, TimeSpan.FromSeconds(5), Launch, test: contract);
             Check(legacyProcess.HasExited, "only_verified_old_process_terminated_after_confirmation");
             Check(ownedPid is not null && ownedPid != legacyPid && await LaunchIdentity.TrustedExisting(port, Pipe(id)), "new_104_healthy_after_switch");
             await StopFixture();
+            Console.Error.WriteLine("isolated_host_test_stage:unready_cases");
             foreach (var mode in new[] { "unready", "exit-zero" })
             {
                 var elapsed = Stopwatch.StartNew();

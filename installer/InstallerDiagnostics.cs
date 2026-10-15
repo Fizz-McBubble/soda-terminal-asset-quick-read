@@ -24,7 +24,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         if (error is System.Net.Http.HttpRequestException) return "protocol_download_connection_failed";
         var value = error.Message;
         if (value.Length <= 80 && value.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') &&
-            new[] { "protocol_download_", "protocol_source_", "payload_", "catalog_", "installed_", "offline_payload_", "uninstaller_", "protocol_registration_", "uninstall_registration_", "start_menu_", "linked_path_", "another_installer_" }.Any(prefix => value.StartsWith(prefix, StringComparison.Ordinal))) return value;
+            new[] { "protocol_download_", "protocol_source_", "payload_", "catalog_", "installed_", "offline_payload_", "uninstaller_", "protocol_registration_", "uninstall_registration_", "start_menu_", "linked_path_", "another_installer_", "local_service_" }.Any(prefix => value.StartsWith(prefix, StringComparison.Ordinal))) return value;
         return "installer_local_operation_failed";
     }
     internal static string Message(string code) => code == "another_installer_is_running" ? "已有安装正在进行，请稍后重试。"
@@ -53,7 +53,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     }
     internal void Record(string phase, string code = "started", int? item = null, string? source = null)
     {
-        if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "complete" or "failed" or "cancelled")) return;
+        if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "service_start" or "complete" or "failed" or "cancelled")) return;
         if (source is not (null or "github_raw" or "github_contents" or "verified_local" or "github_archive")) return;
         code = code == "started" || code == "request_started" || code == "verified" || code == "completed" ? code : Code(new IOException(code));
         phaseChanged?.Invoke(phase);

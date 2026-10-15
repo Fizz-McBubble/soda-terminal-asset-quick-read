@@ -27,6 +27,7 @@ internal sealed partial class InstallForm : Form
     private readonly bool previewOnly;
     private readonly FormOperations? testOperations;
     private Soda.AssetQuickRead.ServiceReadiness.VerifiedOldBridge? pendingOldBridge;
+    private InstallerDiagnostics? activeDiagnostics;
     internal InstallForm(bool preview = false, FormOperations? testOperations = null)
     {
         if (testOperations != null && (!preview || Path.GetFullPath(testOperations.Root) == Path.GetFullPath(InstallEngine.DefaultRoot))) throw new InvalidOperationException("isolated_form_operations_required");
@@ -87,6 +88,7 @@ internal sealed partial class InstallForm : Form
             BeginInvoke(() => { if (running is null) return; text.Text = phase switch
                 { "protocol" => "正在获取并校验所需数据…", "verify" => "正在校验安装文件…", "register" => "正在添加工具入口…", "copy" => "正在写入安装文件…", _ => text.Text }; });
         });
+        activeDiagnostics = diagnostics;
         diagnostics.Record("prepare");
         var reporter = new Progress<int>(value => { if (running is null) return; progress.Indeterminate = false; progress.Value = Math.Clamp(value, 0, 100); if (value >= 100) { installationCommitted = true; cancel.Enabled = false; text.Text = "正在完成安装…"; } });
         string? temporary = null;
@@ -213,7 +215,7 @@ internal sealed partial class InstallForm : Form
 
             if (testOperations is null)
             {
-                if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.4", 50609, "SodaTerminal.AssetQuickRead.Identity.50609"))
+                if (await AlreadyRunning(installed))
                 {
                     serviceStarted = true;
                     text.Text = "安装完成，请返回网页连接。";
@@ -248,20 +250,16 @@ internal sealed partial class InstallForm : Form
             UpdateDetails("资产快读连接服务已启动。开始读取仍需在网页确认并允许管理员权限。\r\n读取结果和账户数据已保留。");
             action.Text = "完成";
         }
-        catch
+        catch (Exception error)
         {
-            var portInUse = false;
-            try { portInUse = Soda.AssetQuickRead.ServiceReadiness.PortInUse(50609); } catch { }
-            if (portInUse)
-            {
-                text.Text = "安装完成，连接服务未启动，请重试启动。";
-                UpdateDetails("50609 端口被其他程序或未知服务占用，无法启动连接服务。请关闭占用端口的程序后重试。\r\n工具不会停止未知进程，读取结果和账户数据已保留，无需重新安装。");
-            }
-            else
-            {
-                text.Text = "安装完成，连接服务未启动，请重试启动。";
-                UpdateDetails("连接服务未通过启动与身份检查。请重试；若仍失败，请查看网页诊断。\r\n工具不会停止已有进程，读取结果和账户数据已保留，无需重新安装。");
-            }
+            var code = InstallerDiagnostics.Code(error);
+            var diagnostics = activeDiagnostics ??= new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"));
+            diagnostics.Record("service_start", code);
+            text.Text = "安装完成，连接服务未启动，请重试启动。";
+            UpdateDetails(ServiceStartMessage(code) + "\r\n诊断代码：" + code + "。可点击“反馈安装问题”提交有限诊断。\r\n工具不会停止其他进程，读取结果和账户数据已保留，无需重新安装。");
+            lastFeedbackReport = diagnostics.BuildSafeReport(code);
+            lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport);
+            feedback.Visible = true;
             action.Text = "重试启动";
         }
         finally
@@ -270,12 +268,25 @@ internal sealed partial class InstallForm : Form
             action.Enabled = cancel.Enabled = uninstall.Enabled = running is null;
         }
     }
+    private static string ServiceStartMessage(string code) => code switch
+    {
+        "local_service_bind_or_identity_unavailable" => "本机连接地址或服务身份不可用；无法确认监听者归属，请检查本机诊断后重试。",
+        "local_service_readiness_timeout" => "连接服务启动后未在时限内通过身份与健康检查，请稍后重试。",
+        "local_service_start_failed" => "连接服务启动失败；原因尚未确定，请查看本机诊断后重试。",
+        _ => "连接服务未通过启动与身份检查；原因尚未确定，请查看本机诊断后重试。",
+    };
+    private static async Task<bool> AlreadyRunning(string installed)
+    {
+        foreach (var port in Soda.AssetQuickRead.ServiceReadiness.ServicePorts)
+            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.7", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
+        return false;
+    }
     private async Task Dispatch(ProcessStartInfo start, bool service)
     {
         if (testOperations is not null) { await testOperations.Dispatch(start); return; }
         if (service)
         {
-            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.4", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.7", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
             return;
         }
         using var launched = Process.Start(start) ?? throw new IOException("launch_failed");

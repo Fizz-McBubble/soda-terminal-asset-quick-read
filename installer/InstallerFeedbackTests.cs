@@ -18,6 +18,8 @@ internal static class InstallerFeedbackTests
         // Test 1: Whitelist classification and raw error mapping
         Check(InstallerFeedback.ClassifyCode("protocol_download_timeout") == "protocol_download_timeout", "valid_code_preserved");
         Check(InstallerFeedback.ClassifyCode("installer_access_denied") == "installer_access_denied", "access_denied_preserved");
+        Check(InstallerFeedback.ClassifyCode("local_service_readiness_timeout") == "local_service_readiness_timeout", "service_timeout_preserved");
+        Check(InstallerFeedback.CreateSafeReport("service_start", "local_service_bind_or_identity_unavailable", 100, []).Stage == "service_start", "service_stage_preserved");
         Check(InstallerFeedback.ClassifyCode("random_untrusted_error_message") == "installer_local_operation_failed", "untrusted_error_mapped");
         Check(InstallerFeedback.ClassifyCode("C:\\Secret\\Path\\Error") == "installer_local_operation_failed", "path_mapped_to_local_failed");
         Check(InstallerFeedback.ClassifyCode(null) == "installer_local_operation_failed", "null_code_mapped");

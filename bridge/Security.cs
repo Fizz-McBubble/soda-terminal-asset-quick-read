@@ -7,7 +7,7 @@ internal static class Security
 {
     internal const int BodyLimit = 4096;
     internal static readonly string[] Origins = ["http://127.0.0.1:50565", "http://127.0.0.1:5173", "https://sodaterminal.com", "https://app.sodaterminal.workers.dev", "https://soda-terminal-production.up.railway.app"];
-    internal static bool ValidHost(string? host) => host == $"127.0.0.1:{Program.Port}";
+    internal static bool ValidHost(string? host) => ServiceReadiness.ServicePorts.Any(port => host == $"127.0.0.1:{port}");
     internal static bool ValidOrigin(string? origin) => origin is not null && Origins.Contains(origin, StringComparer.Ordinal);
     internal static readonly Dictionary<string, string> Pinned = new(StringComparer.Ordinal)
     {

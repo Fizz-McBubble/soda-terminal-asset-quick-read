@@ -72,12 +72,18 @@ internal static class AssetUninstall
         // 1.0.9 reused the exact published 1.0.8 archive and complete file catalog.
         "1.0.9" => Published108Catalog() with { Version = version },
         "1.0.10" => Published1010Catalog(),
+        "1.1.0" => Published110Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
     private static Catalog Published1010Catalog()
     {
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.0.10-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+    private static Catalog Published110Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.0-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
