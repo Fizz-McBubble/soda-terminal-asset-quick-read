@@ -59,7 +59,7 @@ internal static class InstallerExperienceTests
         var passed = 0;
         using var publishedCatalog = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(publishedPackage, "catalog.json")));
         var oldVersion = publishedCatalog.RootElement.GetProperty("version").GetString();
-        if (oldVersion is not ("1.0.10" or "1.1.0" or "1.1.1")) throw new Exception("published_upgrade_fixture_version");
+        if (oldVersion is not ("1.0.10" or "1.1.0" or "1.1.1" or "1.1.2")) throw new Exception("published_upgrade_fixture_version");
         void Check(bool value, string name) { if (!value) throw new Exception("published_" + oldVersion + "_upgrade_" + name); passed++; }
         var oldCatalog = AssetUninstall.PublishedCatalog(oldVersion);
         var oldStub = Path.Combine(publishedPackage, "uninstall", "Soda.AssetQuickRead.Setup.exe");
@@ -217,10 +217,14 @@ internal static class InstallerExperienceTests
         passed += RunServiceSwitchHandlers(root, archive, catalog, sample, stubHash);
         var render = Path.Combine(root, "installer-ui"); Directory.CreateDirectory(render);
         foreach (var scale in new[] { 1f, 1.25f, 1.5f })
-        foreach (var state in new[] { "initial", "preparing", "progress", "starting", "completion", "started", "start-error", "cancelled", "error", "upgrade", "repair" })
+        foreach (var state in new[] { "initial", "preparing", "progress", "starting", "completion", "started", "start-error", "cancelled", "error", "upgrade", "repair",
+            "local_service_identity_unavailable", "local_service_port_conflict", "local_service_address_unavailable", "local_service_bind_or_identity_unavailable", "local_service_readiness_timeout",
+            "installed_repair_files_in_use", "installed_repair_switch_unavailable", "installed_repair_restore_conflict", "installed_version_path_conflict" })
         {
             using var form = new InstallForm(preview: true);
-            if (state is "upgrade" or "repair") form.SetInstalledVersion(state == "upgrade" ? "1.0.0" : "1.0.1");
+            if (state is "upgrade" or "repair") form.SetInstalledVersion(state == "upgrade" ? "1.0.0" : InstallEngine.Version);
+            else if (state.StartsWith("local_service_", StringComparison.Ordinal)) form.ShowServiceStartError(state);
+            else if (state.StartsWith("installed_", StringComparison.Ordinal)) form.ShowInstallError(state);
             else form.ApplyRenderFixture(state);
             form.ShowInTaskbar = false; form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(-32000, -32000); form.Opacity = 0; form.Show();
@@ -236,7 +240,8 @@ internal static class InstallerExperienceTests
             var detailHeight = TextRenderer.MeasureText(visibleDetails.Text, visibleDetails.Font,
                 new Size(visibleDetails.ClientSize.Width, int.MaxValue),
                 TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl | TextFormatFlags.NoPadding).Height;
-            Check(detailHeight <= visibleDetails.ClientSize.Height);
+            if (detailHeight > visibleDetails.ClientSize.Height) throw new Exception("installer_details_overflow:" + state + ":" + scale);
+            passed++;
             Check(!panel.Controls.OfType<TextBox>().Single().TabStop && panel.Controls.OfType<TextBox>().Single().SelectionLength == 0);
             Check(!panel.Controls.OfType<LinkLabel>().Any());
             foreach (Control control in panel.Controls) Check(control.Right <= panel.Width && control.Bottom <= panel.Height);

@@ -47,6 +47,9 @@ internal static class InstallerFeedback
         "installer_access_denied",
         "installer_local_operation_failed",
         "local_service_bind_or_identity_unavailable",
+        "local_service_identity_unavailable",
+        "local_service_port_conflict",
+        "local_service_address_unavailable",
         "local_service_readiness_timeout",
         "local_service_start_failed",
         "protocol_source_rejected",
@@ -76,6 +79,10 @@ internal static class InstallerFeedback
         "protocol_download_failed_http_503",
         "protocol_download_failed_http_504",
         "installed_file_set_mismatch",
+        "installed_repair_files_in_use",
+        "installed_repair_switch_unavailable",
+        "installed_repair_restore_conflict",
+        "installed_version_path_conflict",
         "linked_path_rejected",
     };
 

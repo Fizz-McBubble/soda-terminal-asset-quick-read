@@ -9,13 +9,19 @@ internal interface IRegistration { void Preflight(string executable) { } void Ap
 
 internal static class InstallEngine
 {
-    internal const string Version = "1.1.2";
+    internal const string Version = "1.1.3";
     internal static string DefaultRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SodaTerminal", "AssetQuickRead");
     internal static string Digest(string file) { using var stream = File.OpenRead(file); return Convert.ToHexString(SHA256.HashData(stream)); }
     internal static void NoLinks(string path)
     {
         for (var current = Path.GetFullPath(path); current is not null; current = Path.GetDirectoryName(current))
-            if ((Directory.Exists(current) || File.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new IOException("linked_path_rejected");
+        {
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(current); }
+            catch (FileNotFoundException) { continue; }
+            catch (DirectoryNotFoundException) { continue; }
+            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("linked_path_rejected");
+        }
     }
     internal static string Safe(string root, string relative)
     {
@@ -44,6 +50,18 @@ internal static class InstallEngine
             if (new FileInfo(file).Length != item.Size || Digest(file) != item.Sha256) throw new IOException("installed_hash_mismatch");
         }
     }
+    // A repair may preserve arbitrary old contents, but must never move a link.
+    // Walk without SearchOption.AllDirectories so links are rejected before descent.
+    private static void InspectRepairTree(string root)
+    {
+        NoLinks(root);
+        var pending = new Stack<string>(); pending.Push(root);
+        while (pending.TryPop(out var directory))
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            { NoLinks(entry); if (Directory.Exists(entry)) pending.Push(entry); }
+    }
+    internal static string RepairSwitchCode(IOException error) => error.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021)
+        ? "installed_repair_files_in_use" : "installed_repair_switch_unavailable";
     internal static string Install(string archive, Catalog catalog, string root, IRegistration registration, CancellationToken cancellation, Action<int> progress, Func<CatalogFile, CancellationToken, Stream>? download = null, InstallerDiagnostics? diagnostics = null)
     {
         if (catalog.Version != Version || catalog.Files.Length == 0 || catalog.Files.Select(x => x.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() != catalog.Files.Length) throw new IOException("catalog_identity_rejected");
@@ -54,15 +72,29 @@ internal static class InstallEngine
         var versions = Path.Combine(root, "versions"); var final = Path.Combine(versions, Version);
         var staging = Path.Combine(versions, ".install-" + Guid.NewGuid().ToString("N"));
         NoLinks(final);
-        if (Directory.Exists(final))
+        foreach (var pin in catalog.Files) Safe(final, pin.Path);
+        if (File.Exists(final)) throw new IOException("installed_version_path_conflict");
+        var repairing = Directory.Exists(final);
+        if (repairing)
         {
-            Verify(final, catalog); cancellation.ThrowIfCancellationRequested();
-            try { registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe")); cancellation.ThrowIfCancellationRequested(); progress(100); }
-            catch { registration.Rollback(); throw; }
-            VersionRetention.RetireOlderVersions(root, Version, registration);
-            return final;
+            InspectRepairTree(final);
+            var complete = false;
+            try { Verify(final, catalog); complete = true; }
+            catch (IOException error) when (error.Message is "installed_file_set_mismatch" or "installed_hash_mismatch") { }
+            if (complete)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                try { registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe")); cancellation.ThrowIfCancellationRequested(); progress(100); }
+                catch { registration.Rollback(); throw; }
+                VersionRetention.RetireOlderVersions(root, Version, registration);
+                return final;
+            }
         }
-        Directory.CreateDirectory(staging); var promoted = false; var committed = false;
+        // This name is deliberately outside PublishedVersions/retention candidates.
+        // Keep the entire original tree after successful repair, including unknown
+        // and modified files. Never merge it into the verified executable payload.
+        var backup = Path.Combine(versions, ".repair-" + Version + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging); var promoted = false; var committed = false; var backedUp = false;
         try
         {
             diagnostics?.Record("copy");
@@ -113,6 +145,14 @@ internal static class InstallEngine
                 diagnostics?.Record("protocol", "verified", index);
             }); } catch (AggregateException error) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.Flatten().InnerExceptions[0]).Throw(); throw; }
             diagnostics?.Record("verify"); Verify(staging, catalog); cancellation.ThrowIfCancellationRequested();
+            if (repairing)
+            {
+                InspectRepairTree(final); NoLinks(staging); NoLinks(backup);
+                try { Directory.Move(final, backup); backedUp = true; }
+                catch (IOException error) { throw new IOException(RepairSwitchCode(error), error); }
+                cancellation.ThrowIfCancellationRequested();
+            }
+            NoLinks(final); NoLinks(staging);
             Directory.Move(staging, final); promoted = true;
             cancellation.ThrowIfCancellationRequested();
             diagnostics?.Record("register"); registration.Apply(Path.Combine(final, "Soda.AssetQuickRead.Bridge.exe"));
@@ -128,8 +168,28 @@ internal static class InstallEngine
         {
             if (!committed)
             {
-                registration.Rollback();
-                RemoveOwned(promoted ? final : staging, versions);
+                // Restore payload even if registration rollback itself fails.
+                try { registration.Rollback(); }
+                finally
+                {
+                    if (backedUp)
+                    {
+                        try
+                        {
+                            NoLinks(final); InspectRepairTree(backup); NoLinks(staging);
+                            // Only our promoted replacement can be moved out of the way.
+                            if (promoted) Directory.Move(final, staging);
+                            if (Directory.Exists(final) || File.Exists(final)) throw new IOException("installed_repair_restore_conflict");
+                            Directory.Move(backup, final);
+                            // Preserve a replacement changed by another writer; it is
+                            // no longer an owned, fully verified operation directory.
+                            if (Directory.Exists(staging) && VersionRetention.IsFullyVerified(staging, catalog, Digest)) RemoveOwned(staging, versions);
+                        }
+                        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                        { throw new IOException("installed_repair_restore_conflict", error); }
+                    }
+                    else RemoveOwned(promoted ? final : staging, versions);
+                }
             }
             throw;
         }

@@ -255,12 +255,7 @@ internal sealed partial class InstallForm : Form
             var code = InstallerDiagnostics.Code(error);
             var diagnostics = activeDiagnostics ??= new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"));
             diagnostics.Record("service_start", code);
-            text.Text = "安装完成，连接服务未启动，请重试启动。";
-            UpdateDetails(ServiceStartMessage(code) + "\r\n诊断代码：" + code + "。可点击“反馈安装问题”提交有限诊断。\r\n工具不会停止其他进程，读取结果和账户数据已保留，无需重新安装。");
-            lastFeedbackReport = diagnostics.BuildSafeReport(code);
-            lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport);
-            feedback.Visible = true;
-            action.Text = "重试启动";
+            ShowServiceStartError(code, diagnostics);
         }
         finally
         {
@@ -268,17 +263,29 @@ internal sealed partial class InstallForm : Form
             action.Enabled = cancel.Enabled = uninstall.Enabled = running is null;
         }
     }
-    private static string ServiceStartMessage(string code) => code switch
+    internal void ShowServiceStartError(string code, InstallerDiagnostics? diagnostics = null)
     {
-        "local_service_bind_or_identity_unavailable" => "本机连接地址或服务身份不可用；无法确认监听者归属，请检查本机诊断后重试。",
-        "local_service_readiness_timeout" => "连接服务启动后未在时限内通过身份与健康检查，请稍后重试。",
+        text.Text = "安装完成，连接服务未启动，请重试启动。";
+        UpdateDetails(ServiceStartMessage(code) + "\r\n诊断代码：" + code + "\r\n请点“反馈安装问题”。读取结果和账户保留，无需重新安装。");
+        lastFeedbackReport = diagnostics?.BuildSafeReport(code) ?? InstallerFeedback.CreateSafeReport("service_start", code, 0, []);
+        lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport);
+        feedback.Visible = true;
+        action.Text = "重试启动";
+    }
+    internal static string ServiceStartMessage(string code) => code switch
+    {
+        "local_service_identity_unavailable" => "服务身份未能确认。先完成或取消读取，保存工作并重启电脑后重试；不要结束未知进程。",
+        "local_service_port_conflict" => "全部连接地址被占用。请保存工作并重启电脑后重试；仍失败请反馈，不要结束未知进程。",
+        "local_service_address_unavailable" => "Windows 拒绝全部连接地址。保存工作并重启电脑后重试；仍失败请反馈并保留拦截提示，无需关闭防护。",
+        "local_service_bind_or_identity_unavailable" => "连接地址或服务身份不可用，原因未明。先完成或取消读取，保存工作并重启电脑后重试；不要结束未知进程。",
+        "local_service_readiness_timeout" => "连接服务未及时通过检查。先重试启动；仍失败请完成或取消读取，保存工作并重启电脑后再试。",
         "local_service_start_failed" => "连接服务启动失败；原因尚未确定，请查看本机诊断后重试。",
         _ => "连接服务未通过启动与身份检查；原因尚未确定，请查看本机诊断后重试。",
     };
     private static async Task<bool> AlreadyRunning(string installed)
     {
         foreach (var port in Soda.AssetQuickRead.ServiceReadiness.ServicePorts)
-            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.8", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
+            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.9", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
         return false;
     }
     private async Task Dispatch(ProcessStartInfo start, bool service)
@@ -286,7 +293,7 @@ internal sealed partial class InstallForm : Form
         if (testOperations is not null) { await testOperations.Dispatch(start); return; }
         if (service)
         {
-            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.8", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.9", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
             return;
         }
         using var launched = Process.Start(start) ?? throw new IOException("launch_failed");

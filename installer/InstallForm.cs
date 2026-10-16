@@ -121,7 +121,10 @@ internal sealed partial class InstallForm
     {
         var code = InstallerDiagnostics.Code(new IOException(message));
         text.Text = InstallerDiagnostics.Message(code);
-        UpdateDetails("诊断代码：" + code + "\r\n安装详情已保存在本机。\r\n可点击“反馈安装问题”提交有限诊断。\r\n已有版本、读取结果和账户已保留。");
+        var recovery = InstallerDiagnostics.RecoveryAction(code);
+        UpdateDetails(recovery.Length == 0
+            ? "诊断代码：" + code + "\r\n安装详情已保存在本机。\r\n可点击“反馈安装问题”提交有限诊断。\r\n已有版本、读取结果和账户已保留。"
+            : recovery + "\r\n诊断代码：" + code + "\r\n请点“反馈安装问题”。原文件与读取结果保留。");
         progress.Visible = false; action.Text = "重试";
         lastFeedbackReport = diagnostics?.BuildSafeReport(code) ?? InstallerFeedback.CreateSafeReport("failed", code, 0, []);
         lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport);

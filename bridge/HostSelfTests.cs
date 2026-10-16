@@ -16,9 +16,16 @@ internal static class HostSelfTests
         if (fixture is null) return null;
         var parts = fixture.Split(':');
         if (parts.Length != 3 || !int.TryParse(parts[1], out var port) || port is < 1024 or > 65535 || !Guid.TryParseExact(parts[2], "N", out var id)) return 64;
+        if (parts[0] == "version-identity")
+        {
+            var passed = RunPublishedVersionIdentities();
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new { suite = "quick-read-version-identity", passed, version = LaunchIdentity.Version, exitCode = 0, serviceStarted = false, captureStarted = false }));
+            return 0;
+        }
         // Never run a capture worker or expose /connect or /jobs in this mode.
         if (parts[0] == "unready") { await Task.Delay(15000); return 0; }
         if (parts[0] == "exit-zero") return 0;
+        if (parts[0].StartsWith("exit-failure-", StringComparison.Ordinal) && int.TryParse(parts[0]["exit-failure-".Length..], out var failure) && failure is >= 73 and <= 76) return failure;
         if (parts[0] == "health-only" && GetConsoleWindow() == IntPtr.Zero)
         {
             using var lifetime = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -102,12 +109,31 @@ internal static class HostSelfTests
     }
     private static string Pipe(Guid id) => "SodaTerminal.AssetQuickRead.HostSelfTest." + id.ToString("N");
     private static string Mutex(Guid id) => "Local\\SodaTerminal.AssetQuickRead.HostSelfTest." + id.ToString("N");
+    private static int RunPublishedVersionIdentities()
+    {
+        var passed = 0;
+        void Check(bool value, string name) { if (!value) throw new Exception("host_version_identity:" + name); passed++; }
+        const string published112Exe = "B57D907F32763FA120BABF8CE9609869B3A1FCC9665D2DD2FCF3DDF6B57BD3BE";
+        const string published112Dll = "B9AA35189B489F9F7788FBBB6876E74B7436255951AD8F587864112D4C85E5D6";
+        Check(LaunchIdentity.Version == "1.0.9" && typeof(Program).Assembly.GetName().Version == new Version(1, 0, 9, 0), "current_metadata_matches_wire_version");
+        Check(ServiceReadiness.MatchesPublishedInstallation("1.1.2", "1.0.8", published112Exe, published112Dll), "published_112_exact_component_and_wire_identity_accepted");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.2", LaunchIdentity.Version, published112Exe, published112Dll), "published_112_cannot_claim_current_wire_version");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.2", "1.0.8", new string('0', 64), published112Dll) &&
+            !ServiceReadiness.MatchesPublishedInstallation("1.1.2", "1.0.8", published112Exe, new string('0', 64)), "published_112_corrupt_components_rejected");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.3", "1.0.8", published112Exe, published112Dll), "published_112_wrong_installation_directory_rejected");
+        return passed;
+    }
     internal static async Task<int> Run()
     {
         var checks = 0;
         void Check(bool value, string name) { if (!value) throw new Exception("host_test_failed:" + name); checks++; }
         const string published110Exe = "DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B";
         const string published110Dll = "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F";
+        Check(Program.BindFailureExitCode([SocketError.AddressAlreadyInUse, SocketError.AddressAlreadyInUse]) == ServiceReadiness.PortConflictExitCode, "all_occupied_exit_is_specific");
+        Check(Program.BindFailureExitCode([SocketError.AccessDenied, SocketError.AccessDenied]) == ServiceReadiness.AddressUnavailableExitCode, "all_denied_exit_is_specific");
+        Check(Program.BindFailureExitCode([SocketError.AddressAlreadyInUse, SocketError.AccessDenied]) == 73 &&
+            Program.BindFailureExitCode([]) == 73 && Program.BindFailureExitCode([SocketError.SocketError]) == 73, "mixed_unknown_and_empty_failures_remain_legacy_unknown");
+        Check(ServiceReadiness.StartFailureCode(73) == "local_service_bind_or_identity_unavailable", "legacy_73_not_reinterpreted");
         Check(ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.4", published110Exe, published110Dll), "published_110_component_106_wire_104_accepted");
         Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.6", published110Exe, published110Dll), "published_110_component_version_is_not_wire_version");
         Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.4", new string('0', 64), published110Dll), "published_110_corrupt_exe_rejected");
@@ -117,11 +143,12 @@ internal static class HostSelfTests
         const string published111Exe = "F253FED3EB9A93E0177ADA1B2F342FFF7E0FA75AC1D4CC486CD73934D364E8F8";
         const string published111Dll = "3FCDB206302D318780FD22289FD9563EC9AA5BD70CB8A582319613CA1F2C14E9";
         Check(ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", published111Exe, published111Dll), "published_111_exact_component_and_wire_identity_accepted");
-        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.8", published111Exe, published111Dll), "published_111_cannot_claim_current_wire_version");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", LaunchIdentity.Version, published111Exe, published111Dll), "published_111_cannot_claim_current_wire_version");
         Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", new string('0', 64), published111Dll), "published_111_corrupt_exe_rejected");
         Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", published111Exe, new string('0', 64)), "published_111_corrupt_dll_rejected");
         Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.7", published111Exe, published111Dll) &&
             !ServiceReadiness.MatchesPublishedInstallation("1.1.2", "1.0.7", published111Exe, published111Dll), "published_111_wrong_installation_directory_rejected");
+        checks += RunPublishedVersionIdentities();
         var self = Path.Combine(AppContext.BaseDirectory, "Soda.AssetQuickRead.Bridge.exe");
         using (var exe = new BinaryReader(File.OpenRead(self)))
         {
@@ -190,8 +217,25 @@ internal static class HostSelfTests
                     Check(ServiceReadiness.PortInUse(occupiedPort), "foreign_listener_untouched");
                 }
                 finally { fallbackLifetime.Cancel(); await fallback; }
+                var allOccupiedId = Guid.NewGuid();
+                var occupiedExit = await Program.RunHost(occupiedPort, Pipe(allOccupiedId), Mutex(allOccupiedId), healthOnly: true, isolatedCandidates: [occupiedPort]);
+                Check(occupiedExit == ServiceReadiness.PortConflictExitCode && ServiceReadiness.PortInUse(occupiedPort), "all_occupied_actual_host_exit_preserves_listener");
             }
             finally { occupied.Stop(); }
+
+            var unavailableId = Guid.NewGuid();
+            using (var unknownOwner = new Mutex(true, Mutex(unavailableId), out _))
+            using (var unavailableTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(400)))
+                Check(await Program.RunHost(port, Pipe(unavailableId), Mutex(unavailableId), healthOnly: true, cancellation: unavailableTimeout.Token)
+                    == ServiceReadiness.IdentityUnavailableExitCode, "existing_mutex_without_trusted_identity_returns_specific_exit");
+
+            foreach (var exit in new[] { 73, 74, 75, 76 })
+            {
+                var failedStart = Start("exit-failure-" + exit);
+                try { await ServiceReadiness.Start(failedStart, LaunchIdentity.Version, port, Pipe(id), TimeSpan.FromSeconds(3), Launch); throw new Exception("failed_host_accepted"); }
+                catch (IOException error) { Check(error.Message == ServiceReadiness.StartFailureCode(exit), "actual_process_exit_" + exit + "_classified"); }
+                Check(!failedStart.RedirectStandardError, "persistent_service_stderr_not_coupled_to_installer_" + exit);
+            }
 
             // Legacy bridge coexistence, user confirmation, race rejection, and switch tests
             string selfExeHash, selfDllHash;

@@ -14,6 +14,18 @@ internal static class ServiceReadiness
     // The identity pipe and mutex stay stable across ports: one installed
     // product owns one service, even when Windows excludes the legacy port.
     internal static readonly int[] ServicePorts = [50609, 46009, 46010];
+    internal const int LegacyUnavailableExitCode = 73;
+    internal const int PortConflictExitCode = 74;
+    internal const int AddressUnavailableExitCode = 75;
+    internal const int IdentityUnavailableExitCode = 76;
+    internal static string StartFailureCode(int exitCode) => exitCode switch
+    {
+        LegacyUnavailableExitCode => "local_service_bind_or_identity_unavailable",
+        PortConflictExitCode => "local_service_port_conflict",
+        AddressUnavailableExitCode => "local_service_address_unavailable",
+        IdentityUnavailableExitCode => "local_service_identity_unavailable",
+        _ => "local_service_start_failed",
+    };
     internal static int[] CandidatePorts(int port) => port == ServicePorts[0] ? ServicePorts : [port];
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
@@ -29,6 +41,7 @@ internal static class ServiceReadiness
             ["1.0.5"] = ("E876BA58EF0AD1FCDD8D0EA086456AA0257A26AA65CBD5438A4794371DB85361", "E1BA0B98936B3563D911026459FCE2C60B23328B3E3E23BDBF32CA5B73CFA4AB"),
             ["1.0.6"] = ("DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B", "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F"),
             ["1.0.7"] = ("F253FED3EB9A93E0177ADA1B2F342FFF7E0FA75AC1D4CC486CD73934D364E8F8", "3FCDB206302D318780FD22289FD9563EC9AA5BD70CB8A582319613CA1F2C14E9"),
+            ["1.0.8"] = ("B57D907F32763FA120BABF8CE9609869B3A1FCC9665D2DD2FCF3DDF6B57BD3BE", "B9AA35189B489F9F7788FBBB6876E74B7436255951AD8F587864112D4C85E5D6"),
         };
 
     internal static bool MatchesPublishedBridgePin(string version, string exeSha256, string dllSha256)
@@ -50,6 +63,7 @@ internal static class ServiceReadiness
         "1.0.10" => "1.0.5",
         "1.1.0" => "1.0.6",
         "1.1.1" => "1.0.7",
+        "1.1.2" => "1.0.8",
         _ => null
     };
     // The published 1.1.0 package contains component 1.0.6 bytes, but its
@@ -181,14 +195,16 @@ internal static class ServiceReadiness
     {
         if (start.UseShellExecute || !start.CreateNoWindow || start.WindowStyle != ProcessWindowStyle.Hidden) throw new IOException("windowless_service_launch_required");
         var expectedDirectory = Path.GetDirectoryName(Path.GetFullPath(start.FileName))!;
-        using var timeout = new CancellationTokenSource(readinessTimeout ?? TimeSpan.FromSeconds(8));
+        // The host itself allows 8 seconds for duplicate-instance verification.
+        // Leave room for that explicit terminal diagnostic and our initial probes.
+        using var timeout = new CancellationTokenSource(readinessTimeout ?? TimeSpan.FromSeconds(12));
         foreach (var candidate in CandidatePorts(port))
             if (await TrustedExisting(expectedDirectory, version, candidate, pipeName, timeout.Token)) return;
         using var launched = (launch ?? Process.Start)(start) ?? throw new IOException("launch_failed");
         while (!timeout.IsCancellationRequested)
         {
             if (launched.HasExited && launched.ExitCode != 0)
-                throw new IOException(launched.ExitCode == 73 ? "local_service_bind_or_identity_unavailable" : "local_service_start_failed");
+                throw new IOException(StartFailureCode(launched.ExitCode));
             foreach (var candidate in CandidatePorts(port))
                 if (await TrustedExisting(expectedDirectory, version, candidate, pipeName, timeout.Token)) return;
             try { await Task.Delay(100, timeout.Token); } catch (OperationCanceledException) { break; }

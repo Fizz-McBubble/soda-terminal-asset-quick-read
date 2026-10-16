@@ -2,9 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.1.2</Version>
+    <AssemblyName>Soda.AssetQuickRead.Setup</AssemblyName><Version>1.1.3</Version>
     <ApplicationIcon>soda-brand-icon.ico</ApplicationIcon><Product>Soda Terminal · 资产快读</Product>
-    <Description>Soda Terminal 资产快读安装程序</Description><FileVersion>1.1.2.0</FileVersion>
+    <Description>Soda Terminal 资产快读安装程序</Description><FileVersion>1.1.3.0</FileVersion>
     <PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained><RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -24,4 +24,5 @@
   <ItemGroup><EmbeddedResource Include="published-1.0.10-catalog.json" LogicalName="published-1.0.10-catalog.json" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="published-1.1.0-catalog.json" LogicalName="published-1.1.0-catalog.json" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="published-1.1.1-catalog.json" LogicalName="published-1.1.1-catalog.json" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="published-1.1.2-catalog.json" LogicalName="published-1.1.2-catalog.json" /></ItemGroup>
 </Project>

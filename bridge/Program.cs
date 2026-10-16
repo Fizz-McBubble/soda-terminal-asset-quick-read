@@ -51,20 +51,26 @@ internal static class Program
             }
             Console.Error.WriteLine("asset_quick_read_identity_unavailable");
             if (protocolLaunch) LaunchIdentity.ShowLaunchFailure();
-            return 73;
+            return ServiceReadiness.IdentityUnavailableExitCode;
         }
+        var bindFailures = new List<SocketError>();
         foreach (var candidate in candidates)
         {
             try { return await Serve(candidate, pipeName, healthOnly, cancellation); }
             catch (BindUnavailableException error)
             {
                 Console.Error.WriteLine($"asset_quick_read_bind_failed:{candidate}:{error.Code}");
+                bindFailures.Add(error.Code);
             }
         }
         Console.Error.WriteLine("asset_quick_read_bind_unavailable");
         if (protocolLaunch) LaunchIdentity.ShowLaunchFailure();
-        return 73;
+        return BindFailureExitCode(bindFailures);
     }
+    internal static int BindFailureExitCode(IReadOnlyList<SocketError> failures) => failures.Count == 0 ? ServiceReadiness.LegacyUnavailableExitCode
+        : failures.All(code => code == SocketError.AddressAlreadyInUse) ? ServiceReadiness.PortConflictExitCode
+        : failures.All(code => code == SocketError.AccessDenied) ? ServiceReadiness.AddressUnavailableExitCode
+        : ServiceReadiness.LegacyUnavailableExitCode;
     private static bool IsBindFailure(Exception error) => BindCode(error) is SocketError.AddressAlreadyInUse or SocketError.AccessDenied;
     private sealed class BindUnavailableException(SocketError code, Exception inner) : IOException("local_service_bind_unavailable", inner)
     { internal SocketError Code { get; } = code; }

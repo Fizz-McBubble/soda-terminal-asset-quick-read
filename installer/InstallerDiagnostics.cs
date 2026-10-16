@@ -28,11 +28,22 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         return "installer_local_operation_failed";
     }
     internal static string Message(string code) => code == "another_installer_is_running" ? "已有安装正在进行，请稍后重试。"
+        : code == "installed_repair_files_in_use" ? "现有程序文件暂不可切换，请查看详情后重试。"
+        : code == "installed_repair_switch_unavailable" ? "现有版本暂不可切换，原因未明，请查看详情。"
+        : code == "installed_repair_restore_conflict" ? "修复回滚遇到目录变化，原目录备份已保留。"
+        : code == "installed_version_path_conflict" ? "安装版本路径冲突，原有文件已保留。"
         : code.StartsWith("protocol_download_") ? "所需数据下载或校验失败，请查看安装详情后重试。"
         : code.StartsWith("payload_") || code.StartsWith("catalog_") || code.StartsWith("offline_payload_") ? "安装包准备或校验失败，请重新下载。"
         : code.Contains("registration") || code.Contains("shortcut_conflict") || code.Contains("uninstaller_file_conflict") ? "现有安装入口不匹配，请查看详情；已有版本已保留。"
         : code == "installer_access_denied" ? "安装目录访问被拒绝，请检查权限或安全软件提示。"
         : "安装未完成，请查看安装详情后重试。";
+    internal static string RecoveryAction(string code) => code switch
+    {
+        "installed_repair_files_in_use" or "installed_repair_switch_unavailable" => "请先在网页完成或取消读取，再退出已确认的资产快读后重试；仍失败可保存工作并重启电脑。不要结束未知进程。",
+        "installed_repair_restore_conflict" => "原目录保存在 versions 下本次 .repair- 开头的目录中。请反馈诊断，保留该目录与本次 .install- 目录，不要删除或手动覆盖。",
+        "installed_version_path_conflict" => "版本目录的位置已有文件，安装器不会覆盖它。请反馈诊断，不要删除该文件或整个安装目录。",
+        _ => "",
+    };
     internal void Identity(string stage, bool registrationExists, string previousVersion, bool ownedShape, bool sameVersion, bool upgrading, bool stubExists, string knownPin, bool expectedMatch, bool registrySnapshotChanged, bool stubSnapshotChanged)
     {
         lock (gate)

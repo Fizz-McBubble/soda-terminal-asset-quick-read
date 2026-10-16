@@ -56,8 +56,9 @@ internal static class Tests
             Refuses(() => InstallEngine.Install(archive, catalog with { Version = "9.9.9" }, Path.Combine(root, "bad-version"), new Registration(), CancellationToken.None, _ => { }), "version_rejected");
             foreach (var path in new[] { "../escape", "runtime/../escape", "/absolute", "C:/escape", "runtime\\evil", "runtime//evil", "runtime/./evil" }) Refuses(() => InstallEngine.Safe(root, path), "path_rejected");
             var unknown = Path.Combine(root, "unknown", "versions", InstallEngine.Version); Directory.CreateDirectory(unknown); File.WriteAllText(Path.Combine(unknown, "keep.txt"), "foreign");
-            Refuses(() => InstallEngine.Install(archive, catalog, Path.Combine(root, "unknown"), new Registration(), CancellationToken.None, _ => { }), "unknown_same_version_rejected");
-            Check(File.ReadAllText(Path.Combine(unknown, "keep.txt")) == "foreign", "foreign_same_version_preserved");
+            InstallEngine.Install(archive, catalog, Path.Combine(root, "unknown"), new Registration(), CancellationToken.None, _ => { });
+            var unknownBackup = Directory.GetDirectories(Path.GetDirectoryName(unknown)!, ".repair-*").Single();
+            Check(File.ReadAllText(Path.Combine(unknownBackup, "keep.txt")) == "foreign", "foreign_same_version_preserved_in_repair_backup");
             var cancelledRoot = Path.Combine(root, "cancelled"); using var cancellation = new CancellationTokenSource();
             var cancelReg = new Registration();
             Refuses(() => InstallEngine.Install(archive, catalog, cancelledRoot, cancelReg, cancellation.Token, _ => cancellation.Cancel()), "mid_copy_cancel");
@@ -150,6 +151,7 @@ internal static class Tests
                 if (previousPackage is not null) passed += InstallerExperienceTests.RunPublishedUpgrade(Path.Combine(root, "published-upgrade"), realArchive, realCatalog, privatePayload, previousPackage);
             }
             passed += InstallerExperienceTests.Run(root, archive, catalog);
+            passed += InstallRepairTests.Run(Path.Combine(root, "same-version-repair"), archive, catalog);
             passed += UninstallVersionTests.Run(root);
             passed += InstallerFeedbackTests.Run(Path.Combine(root, "installer-feedback.json"), true);
             passed += VersionRetentionTests.Run(Path.Combine(root, "version-retention.json"), true);
