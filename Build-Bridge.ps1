@@ -28,7 +28,7 @@ try {
     $companion = Join-Path $output 'companion'
     # The host fixture validates a versioned installation layout. Publish once
     # there, test the real apphost, then move those same bytes to the public exit.
-    $published = if ($RunTests) { Join-Path $output 'host-fixture\versions\1.0.8' } else { $companion }
+    $published = if ($RunTests) { Join-Path $output 'host-fixture\versions\1.0.7' } else { $companion }
     & $DotNetPath publish $project --configuration Release --runtime win-x64 --self-contained true "-p:BaseIntermediateOutputPath=$intermediate" "-p:BaseOutputPath=$(Join-Path $output 'bin\')" "-p:RuntimeFrameworkVersion=8.0.29" --output $published
     if ($LASTEXITCODE -ne 0) { throw 'Bridge offline publish failed.' }
     if ($RunTests) {

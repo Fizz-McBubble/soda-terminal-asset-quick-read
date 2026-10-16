@@ -201,7 +201,7 @@ internal static class HostSelfTests
 
             var installationRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".."));
             var contract = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), selfExeHash, selfDllHash);
-            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", "1.0.8"), "isolated_versioned_root");
+            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", "1.0.7"), "isolated_versioned_root");
             using var legacyProcess = Launch(Start("legacy-1.0.3"))!;
             var legacyPid = legacyProcess.Id;
             var readyDeadline = DateTime.UtcNow.AddSeconds(5);
@@ -252,7 +252,7 @@ internal static class HostSelfTests
             foreach (var arg in new[] { "/c", "mklink", "/J", junction, installationRoot }) linkStart.ArgumentList.Add(arg);
             using (var link = Process.Start(linkStart)!) { await link.WaitForExitAsync(); Check(link.ExitCode == 0, "isolated_junction_created"); }
             var linked = new ServiceReadiness.IsolatedTestContract(junction, port, Pipe(id), selfExeHash, selfDllHash);
-            var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.8"), ExecutablePath = Path.Combine(junction, "versions", "1.0.8", "Soda.AssetQuickRead.Bridge.exe") };
+            var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.7"), ExecutablePath = Path.Combine(junction, "versions", "1.0.7", "Soda.AssetQuickRead.Bridge.exe") };
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: linked) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(linkedRecord, test: linked) && !legacyProcess.HasExited, "linked_root_refused_and_preserved");
             Console.Error.WriteLine("isolated_host_test_stage:switch_service");
