@@ -293,7 +293,10 @@ internal static class ProtocolDownloadTests
         var record = File.ReadAllText(Path.Combine(root, "diagnostic/latest.json"));
         Check(!record.Contains("secret") && !record.Contains("private-user") && record.Contains("installer_local_operation_failed"), "redacted_diagnostic");
         Check(InstallerDiagnostics.Message("protocol_registration_conflict").Contains("入口") && !InstallerDiagnostics.Message("protocol_registration_conflict").Contains("网络"), "local_failure_not_network");
-        Check(InstallEngine.Version == "1.1.5" && InstallEngine.BridgeVersion == "1.0.10", "current_version");
+        Check(InstallEngine.Version == "1.1.6" && InstallEngine.BridgeVersion == "1.0.10", "current_version");
+        Check(InstallRegistration.PublishedVersions.Contains("1.1.5") && InstallRegistration.OldPin("1.1.5") == "D55D5ACCEA2AD6A324DFBBEBAB7BBF627ABD7C867BA2B4CB37FD65A5C13A842D", "published_115_uninstaller_identity");
+        Check(AssetUninstall.PublishedCatalog("1.1.5").Files.Length == 345 && AssetUninstall.PublishedCatalog("1.1.5").Version == "1.1.5" &&
+            AssetUninstall.PublishedCatalog("1.1.5").ArchiveSha256 == "2624FA21AA1166C85681BF04890FBA8A10D03E9CB821D6A03BB12C0E3EB99BF7", "published_115_complete_catalog");
         Check(InstallRegistration.PublishedVersions.Contains("1.1.3") && InstallRegistration.OldPin("1.1.3") == "7A2E02F304B3E08A9A6EBD28213F43C1848A1B9A96B6A4789A5F5FAD9F7E5AA4", "published_113_uninstaller_identity");
         Check(AssetUninstall.PublishedCatalog("1.1.3").Files.Length == 345 && AssetUninstall.PublishedCatalog("1.1.3").Version == "1.1.3", "published_113_complete_catalog");
         Check(InstallRegistration.PublishedVersions.Contains("1.1.1") && InstallRegistration.OldPin("1.1.1") == "7FF00C0CBA547EB65E48448B67F7DC360B783850CBE5D86FC3726BD3D50D8F81", "published_111_uninstaller_identity");

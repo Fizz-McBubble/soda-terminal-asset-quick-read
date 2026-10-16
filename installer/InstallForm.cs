@@ -111,7 +111,7 @@ internal sealed partial class InstallForm
             await Task.Run(() => AssetUninstall.Remove(InstallEngine.DefaultRoot, InstallEngine.ReadCatalog(), new UserRegistration(), new RegistryUninstallStore(), hash, running.Token));
             }
             text.Text = "已卸载，读取结果和账户数据已保留。";
-            UpdateDetails("资产快读的程序与入口已移除。读取结果和未知文件保留，可重新安装。");
+            UpdateDetails("已核实的程序与入口已移除。共享驱动、读取结果、账户数据和未知文件保留，可重新安装。");
             installed = null; serviceStarted = true; serviceStarting = false; pendingOldBridge = null;
             uninstall.Visible = false; action.Text = "完成";
             feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null;

@@ -35,7 +35,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         : code.StartsWith("protocol_download_") ? "所需数据下载或校验失败，请查看安装详情后重试。"
         : code.StartsWith("payload_") || code.StartsWith("catalog_") || code.StartsWith("offline_payload_") ? "安装包准备或校验失败，请重新下载。"
         : code.Contains("registration") || code.Contains("shortcut_conflict") || code.Contains("uninstaller_file_conflict") ? "现有安装入口不匹配，请查看详情；已有版本已保留。"
-        : code == "installer_access_denied" ? "安装目录访问被拒绝，请检查权限或安全软件提示。"
+        : code == "installer_access_denied" ? "安装目录访问被拒绝，已有版本和读取结果保留。"
         : "安装未完成，请查看安装详情后重试。";
     internal static string RecoveryAction(string code) => code switch
     {
@@ -48,7 +48,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     {
         "uninstaller_service_stop_failed" => "连接服务状态已变化，卸载已中止。",
         "uninstaller_files_in_use" => "仍有程序文件被占用，卸载未完成。",
-        "installer_access_denied" => "卸载访问被拒绝，请检查权限或安全软件提示。",
+        "installer_access_denied" => "程序文件被拒绝删除，卸载未完成。",
         "installer_cancelled" => "卸载已取消，已有文件和结果保留。",
         _ => "卸载未完成，已有文件和结果保留。",
     };
@@ -56,6 +56,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     {
         "uninstaller_service_stop_failed" => "请先完成或取消读取，再重试卸载；仍失败请反馈诊断。工具不会结束未知进程。",
         "uninstaller_files_in_use" => "请先完成或取消读取，再重试卸载。仍失败请反馈诊断，不要删除版本目录或结束未知进程。",
+        "installer_access_denied" => "已有文件与读取结果保留；共享驱动不会被停止或删除。请反馈诊断，不要删除版本目录或手动修改权限。",
         _ => "请重试卸载；仍失败请反馈诊断。读取结果与账户数据保留。",
     };
     internal void Identity(string stage, bool registrationExists, string previousVersion, bool ownedShape, bool sameVersion, bool upgrading, bool stubExists, string knownPin, bool expectedMatch, bool registrySnapshotChanged, bool stubSnapshotChanged)
@@ -80,7 +81,8 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     {
         if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "service_start" or "uninstall" or "complete" or "failed" or "cancelled")) return;
         if (source is not (null or "github_raw" or "github_contents" or "verified_local" or "github_archive")) return;
-        code = code == "started" || code == "request_started" || code == "verified" || code == "completed" ? code : Code(new IOException(code));
+        code = code == "started" || code == "request_started" || code == "verified" || code == "completed" || InstallerFeedback.WhitelistedCodes.Contains(code)
+            ? code : Code(new IOException(code));
         phaseChanged?.Invoke(phase);
         lock (gate)
         {

@@ -66,6 +66,13 @@ internal static class UninstallVersionTests
             if (version is "1.0.4" or "1.0.5")
                 Check(actual.Files.SequenceEqual(AssetUninstall.Published103Catalog().Files), "immutable_runtime_" + version);
         }
+        Check(InstallRegistration.PublishedVersions.Contains("1.1.5") &&
+            InstallRegistration.OldPin("1.1.5") == "D55D5ACCEA2AD6A324DFBBEBAB7BBF627ABD7C867BA2B4CB37FD65A5C13A842D", "published_115_stub_identity");
+        var published115 = AssetUninstall.PublishedCatalog("1.1.5");
+        Check(published115.Version == "1.1.5" && published115.Files.Length == 345 &&
+            published115.ArchiveSha256 == "2624FA21AA1166C85681BF04890FBA8A10D03E9CB821D6A03BB12C0E3EB99BF7" &&
+            published115.Files.Single(pin => pin.Path == "runtime/WinDivert64.sys").Sha256 == "8DA085332782708D8767BCACE5327A6EC7283C17CFB85E40B03CD2323A90DDC2",
+            "published_115_catalog_identity");
         Fixture New(string name, string registeredVersion)
         {
             var root = Path.Combine(baseRoot, "uninstall-versions", name);
@@ -73,7 +80,7 @@ internal static class UninstallVersionTests
             foreach (var version in versions)
             {
                 var pins = new List<CatalogFile>();
-                foreach (var relative in new[] { "Soda.AssetQuickRead.Bridge.exe", "runtime/tool.bin", "runtime/modified.bin" })
+                foreach (var relative in new[] { "Soda.AssetQuickRead.Bridge.exe", "runtime/tool.bin", "runtime/WinDivert64.sys", "runtime/modified.bin" })
                 {
                     var file = InstallEngine.Safe(Path.Combine(root, "versions", version), relative);
                     Directory.CreateDirectory(Path.GetDirectoryName(file)!);
@@ -113,6 +120,8 @@ internal static class UninstallVersionTests
             {
                 var root = Path.Combine(fixture.Root, "versions", installedVersion);
                 Check(!File.Exists(Path.Combine(root, "Soda.AssetQuickRead.Bridge.exe")) && !File.Exists(Path.Combine(root, "runtime", "tool.bin")), "all_exact_files_removed");
+                Check(File.Exists(Path.Combine(root, "runtime", "WinDivert64.sys")) &&
+                    File.ReadAllText(Path.Combine(root, "runtime", "WinDivert64.sys")) == "SYNTHETIC:" + installedVersion + ":runtime/WinDivert64.sys", "shared_driver_retained");
                 Check(File.ReadAllText(Path.Combine(root, "runtime", "modified.bin")).EndsWith(":USER_EDIT") &&
                     File.ReadAllText(Path.Combine(root, "unknown.txt")) == "FOREIGN", "modified_and_unknown_preserved");
             }
@@ -131,6 +140,21 @@ internal static class UninstallVersionTests
             var stub = Path.Combine(fixture.Root, "uninstall.exe");
             Remove(fixture, path => path == stub ? InstallRegistration.OldPin("1.0.1")! : InstallEngine.Digest(path));
             Check(fixture.ProtocolStore.Value is null && !File.Exists(stub), "missing_record_still_removes_owned_entries");
+        }
+        {
+            // The first published installer had neither an uninstall record nor
+            // an uninstall stub. The new setup must remove it and coexisting
+            // known versions directly, without upgrading the old installation.
+            var fixture = New("legacy-100-without-uninstall-entry", "1.0.0");
+            fixture.Store.Value = null;
+            File.Delete(Path.Combine(fixture.Root, "uninstall.exe"));
+            var driver = Path.Combine(fixture.Root, "versions", "1.0.0", "runtime", "WinDivert64.sys");
+            using var residentDriver = new FileStream(driver, FileMode.Open, FileAccess.Read, FileShare.Read);
+            Check(InstallForm.HasInstallationTraces(fixture.Root, null), "legacy_without_uninstall_entry_is_discoverable");
+            Remove(fixture);
+            Check(fixture.Store.Value is null && fixture.ProtocolStore.Value is null && !File.Exists(fixture.Shortcut), "legacy_entries_removed_in_one_pass");
+            Check(versions.All(version => !File.Exists(Path.Combine(fixture.Root, "versions", version, "Soda.AssetQuickRead.Bridge.exe"))), "legacy_and_all_coexisting_known_versions_removed");
+            Check(File.Exists(driver) && File.ReadAllText(Path.Combine(fixture.Root, "jobs", "keep.json")) == "PRESERVE", "legacy_shared_driver_and_results_preserved");
         }
         {
             var fixture = New("mismatched-published-stub", "1.0.2"); var before = Snapshot(fixture);
@@ -188,6 +212,54 @@ internal static class UninstallVersionTests
             Remove(fixture);
             Check(fixture.Store.Value is null && fixture.ProtocolStore.Value is null && !File.Exists(path), "delete_shared_reader_allows_uninstall");
             Check(File.ReadAllText(Path.Combine(fixture.Root, "versions", "1.1.3", "unknown.txt")) == "FOREIGN", "delete_shared_preserves_unknown");
+        }
+        {
+            // The shared kernel image is excluded before the delete guard. A
+            // resident reader that denies deletion must not block the uninstall.
+            var fixture = New("shared-driver-resident", "1.1.5");
+            var driver = Path.Combine(fixture.Root, "versions", "1.1.5", "runtime", "WinDivert64.sys");
+            using var reader = new FileStream(driver, FileMode.Open, FileAccess.Read, FileShare.Read);
+            Remove(fixture);
+            Check(fixture.Store.Value is null && fixture.ProtocolStore.Value is null && !File.Exists(fixture.Shortcut), "shared_driver_does_not_block_uninstall");
+            Check(File.Exists(driver) && File.ReadAllText(driver) == "SYNTHETIC:1.1.5:runtime/WinDivert64.sys", "shared_driver_resident_preserved");
+        }
+        {
+            // Recreate the observed failed 1.1.5 site: 1.1.3 is partially
+            // removed, the installed record/stub is the published 1.1.5
+            // identity, and the current setup being exercised is 1.1.6.
+            var fixture = New("old-site-115-partial-113", "1.1.5");
+            var v113Root = Path.Combine(fixture.Root, "versions", "1.1.3");
+            var assetPins = new List<CatalogFile>();
+            foreach (var relative in new[] { "runtime/assets/manifest.json", "runtime/assets/datamine.json", "runtime/assets/nap.json" })
+            {
+                var path = InstallEngine.Safe(v113Root, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, "SYNTHETIC:1.1.3:" + relative);
+                assetPins.Add(new CatalogFile(relative, new FileInfo(path).Length, InstallEngine.Digest(path)));
+            }
+            var catalog113 = fixture.Catalogs["1.1.3"];
+            fixture.Catalogs["1.1.3"] = catalog113 with { Files = catalog113.Files.Concat(assetPins).ToArray() };
+            File.Delete(Path.Combine(v113Root, "Soda.AssetQuickRead.Bridge.exe"));
+            File.Delete(Path.Combine(v113Root, "runtime", "tool.bin"));
+            var stub = Path.Combine(fixture.Root, "uninstall.exe");
+            AssetUninstall.RemoveForTests(fixture.Root, fixture.Current, fixture.Protocol, fixture.Store,
+                fixture.StubHash, version => fixture.Catalogs[version],
+                path => path == stub ? InstallRegistration.OldPin("1.1.5")! : InstallEngine.Digest(path));
+            Check(fixture.Store.Value is null && fixture.ProtocolStore.Value is null && !File.Exists(fixture.Shortcut) && !File.Exists(stub), "old_site_115_uninstall_completed");
+            Check(File.Exists(Path.Combine(v113Root, "runtime", "WinDivert64.sys")), "old_site_113_shared_driver_retained");
+            Check(!File.Exists(Path.Combine(v113Root, "runtime", "assets", "manifest.json")), "old_site_113_owned_asset_removed");
+            Check(File.ReadAllText(Path.Combine(v113Root, "runtime", "modified.bin")).EndsWith(":USER_EDIT") &&
+                File.ReadAllText(Path.Combine(v113Root, "unknown.txt")) == "FOREIGN", "old_site_unknown_modified_preserved");
+            Check(File.Exists(Path.Combine(fixture.Root, "versions", "1.1.5", "runtime", "WinDivert64.sys")) &&
+                !File.Exists(Path.Combine(fixture.Root, "versions", "1.1.5", "Soda.AssetQuickRead.Bridge.exe")), "old_site_115_components_removed_driver_retained");
+        }
+        {
+            var diagnosticsRoot = Path.Combine(baseRoot, "diagnostics-classified");
+            var diagnostics = new InstallerDiagnostics(diagnosticsRoot);
+            diagnostics.Record("uninstall", "installer_access_denied");
+            using var record = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(diagnosticsRoot, "latest.json")));
+            Check(record.RootElement.GetProperty("events").EnumerateArray()
+                .Any(entry => entry.GetProperty("code").GetString() == "installer_access_denied"), "classified_uninstall_code_persisted");
         }
         {
             var fixture = New("locked-runtime", "1.0.3");

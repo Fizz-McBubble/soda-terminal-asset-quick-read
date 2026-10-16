@@ -66,7 +66,7 @@ internal static class AssetUninstall
         }
     }
     internal const string ConfirmationTitle = "卸载资产快读";
-    internal const string Confirmation = "卸载资产快读？\n请先完成或取消读取，卸载将关闭资产快读连接服务。\n读取结果和账户数据会保留。";
+    internal const string Confirmation = "卸载资产快读？\n请先完成或取消读取，卸载将关闭资产快读连接服务。\n共享驱动不会被停止或删除；读取结果和账户数据会保留。";
     internal static string FailureCode(Exception error) => error is IOException io && io.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021)
         ? "uninstaller_files_in_use" : InstallerDiagnostics.Code(error);
     internal static void Remove(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store, string stubHash, CancellationToken cancellation = default)
@@ -108,6 +108,7 @@ internal static class AssetUninstall
         "1.1.2" => Published112Catalog(),
         "1.1.3" => Published113Catalog(),
         "1.1.4" => Published114Catalog(),
+        "1.1.5" => Published115Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
@@ -139,6 +140,11 @@ internal static class AssetUninstall
     private static Catalog Published114Catalog()
     {
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.4-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+    private static Catalog Published115Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.5-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
@@ -187,6 +193,11 @@ internal static class AssetUninstall
             bool Matches((string Path, CatalogFile Pin) file) => File.Exists(file.Path) &&
                 new FileInfo(file.Path).Length == file.Pin.Size && digest(file.Path) == file.Pin.Sha256;
             var ownedFiles = files.Where(Matches).ToArray();
+            // The WinDivert driver is a shared kernel image. It can be loaded by
+            // the system service even when this tool is not running; CREATE(DELETE)
+            // may succeed while File.Delete still fails with ERROR_ACCESS_DENIED.
+            // Never stop the service or delete the verified image or its parents.
+            var removableFiles = ownedFiles.Where(file => !IsSharedDriverFile(file.Pin.Path)).ToArray();
             AssertUnchanged();
             prepareOwnedService?.Invoke();
             AssertUnchanged();
@@ -195,7 +206,7 @@ internal static class AssetUninstall
             var handles = new List<FileStream>();
             try
             {
-                foreach (var file in ownedFiles) handles.Add(OpenDeletionGuard(file.Path));
+                foreach (var file in removableFiles) handles.Add(OpenDeletionGuard(file.Path));
                 if (observedStubHash is not null) handles.Add(OpenDeletionGuard(uninstall));
                 AssertRegistrationUnchanged();
             }
@@ -210,7 +221,7 @@ internal static class AssetUninstall
             // components are removed; do not rehash a large bundled EXE per file.
             using var stubGuard = observedStubHash is null ? null : new FileStream(uninstall, FileMode.Open, FileAccess.Read, FileShare.Read);
             AssertUnchanged();
-            foreach (var file in ownedFiles)
+            foreach (var file in removableFiles)
             {
                 AssertRegistrationUnchanged();
                 InstallEngine.NoLinks(file.Path);
@@ -258,6 +269,8 @@ internal static class AssetUninstall
         // The existing retention guard denies writes/rename without mutating files.
         return VersionRetention.OpenDeletionGuard(path);
     }
+    private static bool IsSharedDriverFile(string catalogPath) =>
+        catalogPath.Equals("runtime/WinDivert64.sys", StringComparison.OrdinalIgnoreCase);
     private static IEnumerable<string> Parents(string file, string root)
     {
         for (var parent = Path.GetDirectoryName(file); parent is not null && parent.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase); parent = Path.GetDirectoryName(parent)) yield return parent;
