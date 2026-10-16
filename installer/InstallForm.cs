@@ -95,7 +95,7 @@ internal sealed partial class InstallForm
     private async Task UninstallAsync()
     {
         if ((previewOnly && testOperations is null) || running is not null || serviceStarting) return;
-        if (testOperations is null && MessageBox.Show(AssetUninstall.Confirmation, "Soda Terminal · 资产快读",
+        if (testOperations is null && MessageBox.Show(AssetUninstall.Confirmation, AssetUninstall.ConfirmationTitle,
             MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         running = new CancellationTokenSource(); action.Enabled = cancel.Enabled = uninstall.Enabled = false;
         text.Text = "正在卸载资产快读…"; progress.Visible = true; progress.Indeterminate = true;
@@ -112,8 +112,11 @@ internal sealed partial class InstallForm
             }
             text.Text = "已卸载，读取结果和账户数据已保留。";
             UpdateDetails("资产快读的程序与入口已移除。读取结果和未知文件保留，可重新安装。");
-            installed = null; serviceStarted = false; serviceStarting = false; uninstall.Visible = false; action.Text = "开始安装";
-            card.Controls["version"]!.Text = "安装版本 " + InstallEngine.Version;
+            installed = null; serviceStarted = true; serviceStarting = false; pendingOldBridge = null;
+            uninstall.Visible = false; action.Text = "完成";
+            feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null;
+            cancel.Visible = false;
+            card.Controls["version"]!.Text = "资产快读已卸载";
             progress.Value = 100;
         }
         catch (Exception error)

@@ -39,7 +39,7 @@ internal static class AssetUninstall
             InstallEngine.NoLinks(root);
             if (!relocated)
             {
-                if (MessageBox.Show(Confirmation, "Soda Terminal · 资产快读",
+                if (MessageBox.Show(Confirmation, ConfirmationTitle,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 0;
                 var current = Environment.ProcessPath ?? throw new IOException("uninstaller_identity_missing");
                 var installed = Path.Combine(root, "uninstall.exe");
@@ -55,7 +55,7 @@ internal static class AssetUninstall
             catch (ArgumentException) { }
             Remove(root, InstallEngine.ReadCatalog(), new UserRegistration(), new RegistryUninstallStore(),
                 InstallEngine.Digest(Environment.ProcessPath!));
-            MessageBox.Show("已卸载，读取结果和账户数据已保留。", "Soda Terminal · 资产快读"); return 0;
+            MessageBox.Show("已卸载，读取结果和账户数据已保留。", "卸载完成"); return 0;
         }
         catch (Exception error)
         {
@@ -65,7 +65,8 @@ internal static class AssetUninstall
                 "卸载未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1;
         }
     }
-    internal const string Confirmation = "卸载资产快读？\n请先在网页完成或取消读取。卸载会结束已核实归属的资产快读连接服务，不会结束未知进程；已提权的读取进程可能继续运行。\n读取结果和账户数据会保留。";
+    internal const string ConfirmationTitle = "卸载资产快读";
+    internal const string Confirmation = "卸载资产快读？\n请先完成或取消读取，卸载将关闭资产快读连接服务。\n读取结果和账户数据会保留。";
     internal static string FailureCode(Exception error) => error is IOException io && io.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021)
         ? "uninstaller_files_in_use" : InstallerDiagnostics.Code(error);
     internal static void Remove(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store, string stubHash, CancellationToken cancellation = default)
@@ -106,6 +107,7 @@ internal static class AssetUninstall
         "1.1.1" => Published111Catalog(),
         "1.1.2" => Published112Catalog(),
         "1.1.3" => Published113Catalog(),
+        "1.1.4" => Published114Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
@@ -132,6 +134,11 @@ internal static class AssetUninstall
     private static Catalog Published113Catalog()
     {
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.3-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+    private static Catalog Published114Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.4-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
@@ -188,12 +195,16 @@ internal static class AssetUninstall
             var handles = new List<FileStream>();
             try
             {
-                foreach (var file in ownedFiles) handles.Add(new FileStream(file.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
-                if (observedStubHash is not null) handles.Add(new FileStream(uninstall, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
+                foreach (var file in ownedFiles) handles.Add(OpenDeletionGuard(file.Path));
+                if (observedStubHash is not null) handles.Add(OpenDeletionGuard(uninstall));
                 AssertRegistrationUnchanged();
             }
             catch (IOException error) when (error.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021))
             { throw new IOException("uninstaller_files_in_use", error); }
+            catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode is 32 or 33)
+            { throw new IOException("uninstaller_files_in_use", error); }
+            catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 5)
+            { throw new UnauthorizedAccessException("uninstaller_access_denied", error); }
             finally { foreach (var handle in handles) handle.Dispose(); }
             // Keep the stub protected from writes and replacement while managed
             // components are removed; do not rehash a large bundled EXE per file.
@@ -236,6 +247,16 @@ internal static class AssetUninstall
             }
         }
         finally { operation.ReleaseMutex(); }
+    }
+    private static FileStream OpenDeletionGuard(string path)
+    {
+        InstallEngine.NoLinks(path);
+        if ((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0)
+            throw new UnauthorizedAccessException("uninstaller_access_denied");
+        // Probe the operation we will perform. GENERIC_WRITE incorrectly rejects
+        // delete-shared readers and resident WinDivert images that permit DELETE.
+        // The existing retention guard denies writes/rename without mutating files.
+        return VersionRetention.OpenDeletionGuard(path);
     }
     private static IEnumerable<string> Parents(string file, string root)
     {

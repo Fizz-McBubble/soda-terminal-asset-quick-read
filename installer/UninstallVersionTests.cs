@@ -2,6 +2,23 @@ namespace Soda.AssetQuickRead.Setup;
 
 internal static class UninstallVersionTests
 {
+    internal static int RunStandalone(string reportPath)
+    {
+        reportPath = Path.GetFullPath(reportPath);
+        var root = Path.Combine(Path.GetDirectoryName(reportPath)!, "uninstall-run-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var assertions = Run(root);
+            File.WriteAllText(reportPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, assertions, root }));
+            return 0;
+        }
+        catch (Exception error)
+        {
+            File.WriteAllText(reportPath, System.Text.Json.JsonSerializer.Serialize(new { passed = false, error = error.Message, root }));
+            return 1;
+        }
+    }
     private sealed class ProtocolStore : IProtocolRegistrationStore
     {
         internal ProtocolRegistration? Value;
@@ -161,6 +178,16 @@ internal static class UninstallVersionTests
             Reject(() => Remove(fixture), "protocol_registration_changed");
             Unchanged(fixture, before);
             Check(fixture.ProtocolStore.Value == foreign && fixture.Store.Value is not null, "replacement_before_removal_preserved");
+        }
+        {
+            // A reader that permits deletion must not be rejected merely because
+            // it denies writes (the same distinction as a resident WinDivert file).
+            var fixture = New("delete-shared-runtime", "1.1.3");
+            var path = Path.Combine(fixture.Root, "versions", "1.1.3", "runtime", "tool.bin");
+            using var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            Remove(fixture);
+            Check(fixture.Store.Value is null && fixture.ProtocolStore.Value is null && !File.Exists(path), "delete_shared_reader_allows_uninstall");
+            Check(File.ReadAllText(Path.Combine(fixture.Root, "versions", "1.1.3", "unknown.txt")) == "FOREIGN", "delete_shared_preserves_unknown");
         }
         {
             var fixture = New("locked-runtime", "1.0.3");

@@ -297,15 +297,21 @@ internal static class InstallerExperienceTests
             form.SetInstalledVersion(registration.InstalledVersion(root)); Show(form);
             Button(form, "修复安装").PerformClick(); Pump(() => Has(form, "完成"));
             Check(File.Exists(Path.Combine(root, "uninstall.exe")) && serviceAttempts == 3 && installAttempts == 3);
-            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"), form);
+            Check(form.Controls.OfType<Panel>().Single().Controls["version"]!.Text == "当前 " + InstallEngine.Version);
+            Button(form, "卸载").PerformClick(); Pump(() => form.Controls.OfType<Panel>().Single().Controls["version"]!.Text == "资产快读已卸载", form);
             Check(protocol.Value is null && store.Value is null && !File.Exists(shortcut) && !File.Exists(Path.Combine(root, "uninstall.exe")));
-            Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "完成") && Button(form, "卸载").Enabled);
+            Check(Button(form, "完成").Visible && !Button(form, "卸载").Visible);
+            Button(form, "完成").PerformClick(); Check(form.IsDisposed && installAttempts == 3 && serviceAttempts == 3);
+        }
+        using (var form = new InstallForm(true, operations))
+        {
+            Show(form); Button(form, "开始安装").PerformClick(); Pump(() => Has(form, "完成") && Button(form, "卸载").Enabled);
             Check(serviceAttempts == 4 && installAttempts == 4);
             if (!Button(form, "卸载").Visible || !Button(form, "卸载").Enabled) throw new Exception("reinstalled_uninstall_state:visible=" + Button(form, "卸载").Visible + ":enabled=" + Button(form, "卸载").Enabled + ":formVisible=" + form.Visible + ":disposed=" + form.IsDisposed);
             passed++;
-            Button(form, "卸载").PerformClick(); Pump(() => Has(form, "开始安装"), form);
+            Button(form, "卸载").PerformClick(); Pump(() => form.Controls.OfType<Panel>().Single().Controls["version"]!.Text == "资产快读已卸载", form);
             Check(protocol.Value is null && store.Value is null);
-            Button(form, "关闭").PerformClick(); Check(form.IsDisposed);
+            Button(form, "完成").PerformClick(); Check(form.IsDisposed);
         }
         {
             var pendingRoot = Path.Combine(baseRoot, "start-pending-handlers");

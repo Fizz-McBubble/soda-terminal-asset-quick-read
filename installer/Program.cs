@@ -8,6 +8,7 @@ internal static class Program
     {
         if (args.Length == 2 && args[0] == "--inspect-install") return InstallInspection.Run(args[1]);
         if (args.Length == 2 && args[0] == "--self-test") return Tests.Run(args[1]);
+        if (args.Length == 2 && args[0] == "--uninstall-self-test") return UninstallVersionTests.RunStandalone(args[1]);
         if (args.Length == 2 && args[0] == "--feedback-self-test") { ApplicationConfiguration.Initialize(); return InstallerFeedbackTests.Run(args[1]); }
         if (args.Length == 3 && args[0] == "--upgrade-self-test") return UpgradeIdentityTests.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--retention-self-test") return VersionRetentionTests.Run(args[1]);
@@ -122,6 +123,7 @@ internal sealed partial class InstallForm : Form
             finally { operation.ReleaseMutex(); }
             }
             diagnostics.Record("complete", "completed");
+            card.Controls["version"]!.Text = "当前 " + InstallEngine.Version;
             uninstall.Visible = true;
             await StartInstalledService();
         }

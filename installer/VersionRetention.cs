@@ -23,7 +23,7 @@ internal static class VersionRetention
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass,
         ref FileDisposition information, uint size);
-    private static FileStream OpenRetirementGuard(string path)
+    internal static FileStream OpenDeletionGuard(string path)
     {
         // DELETE access, read sharing only: changes and rename/replacement stay denied.
         var fullPath = Path.GetFullPath(path);
@@ -222,7 +222,7 @@ internal static class VersionRetention
                 InstallEngine.NoLinks(filePath);
                 if (!File.Exists(filePath)) return;
 
-                var stream = OpenRetirementGuard(filePath);
+                var stream = OpenDeletionGuard(filePath);
                 handles.Add((filePath, pin, stream));
             }
 
