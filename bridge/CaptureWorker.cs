@@ -7,30 +7,33 @@ namespace Soda.AssetQuickRead;
 internal static class CaptureWorker
 {
     internal static bool SafePhase(string phase) => phase is "uac" or "launch" or "preflight" or "public_metadata" or "driver" or "capture" or "validation" or "complete" or "cancel";
-    internal static bool SafeCode(string? code) => code is null || Regex.IsMatch(code, "\\A[a-z_]{1,100}(?::[0-9]{1,10})?\\z", RegexOptions.CultureInvariant);
+    internal static bool SafeCode(string? code) => code is null || CaptureFailureDetails.Codes.Contains(code, StringComparer.Ordinal) || Regex.IsMatch(code, "\\A[a-z_]{1,100}\\z", RegexOptions.CultureInvariant);
     internal static Progress OnStderr(string line, Progress previous)
     {
+        if (previous.State == "error" && !line.StartsWith("error:", StringComparison.Ordinal)) return previous;
         if (line == "status:cn_public_metadata_derived") return new("starting", "driver", null);
         // The pinned Rust emits this only after Capture::open succeeds; bootstrap is excluded from this clock.
         if (line == "status:waiting_for_normal_game_login") return new("capturing", "capture", null, DateTimeOffset.UtcNow);
         if (line == "status:login_handshake_observed") return previous;
-        if (line.StartsWith("error:", StringComparison.Ordinal) && SafeCode(line[6..]))
+        if (line.StartsWith("error:", StringComparison.Ordinal) && CaptureFailureDetails.TryNormalize(line[6..], out var code, out var native))
         {
-            var code = line[6..];
-            var phase = previous.ReadyAt is not null ? "capture" : code.StartsWith("capture_", StringComparison.Ordinal) || code.StartsWith("dll_", StringComparison.Ordinal) ? "driver" : "public_metadata";
-            return new("error", phase, code, previous.ReadyAt);
+            // Rust may repeat the generic receive code after reporting its Win32 code.
+            if (previous.State == "error") return previous.Code == code && previous.NativeErrorCode is null && native is not null ? previous with { NativeErrorCode = native } : previous;
+            return new("error", CaptureFailureDetails.Phase(code, previous), code, previous.ReadyAt, NativeErrorCode: native);
         }
         return previous;
     }
     internal static Progress Finish(int exitCode, Progress prior, string output, bool cancelled)
     {
-        if (cancelled) return new("stopped", "cancel", "cancelled", prior.ReadyAt);
+        var childExitCode = unchecked((uint)exitCode);
+        if (cancelled) return new("stopped", "cancel", "cancelled", prior.ReadyAt, ChildExitCode: childExitCode);
+        if (prior.State == "error") return prior with { ChildExitCode = childExitCode };
         if (exitCode is 0 or 2 && File.Exists(output))
         {
             try
             {
                 var candidate = Snapshot.Read(output);
-                return new("received", "complete", candidate.Document.GetProperty("response_status_semantics_verified").GetBoolean() ? "staged_for_field_review" : "response_semantics_unverified", prior.ReadyAt, candidate.Counts);
+                return new("received", "complete", candidate.Document.GetProperty("response_status_semantics_verified").GetBoolean() ? "staged_for_field_review" : "response_semantics_unverified", prior.ReadyAt, candidate.Counts, ChildExitCode: childExitCode);
             }
             catch (ApiFault error)
             {
@@ -39,13 +42,13 @@ internal static class CaptureWorker
                     Security.RejectLinks(output);
                     if (new FileInfo(output).Length > Snapshot.MaxBytes) throw new ApiFault(409, "candidate_size_invalid");
                     using var json = JsonDocument.Parse(File.ReadAllBytes(output));
-                    if (json.RootElement.TryGetProperty("stop_reason", out var reason) && reason.GetString() == "timed_out") return new("timed_out", "capture", "timed_out", prior.ReadyAt);
+                    if (json.RootElement.TryGetProperty("stop_reason", out var reason) && reason.GetString() == "timed_out") return new("timed_out", "capture", "timed_out", prior.ReadyAt, ChildExitCode: childExitCode);
                 }
                 catch { }
-                return new("error", "validation", error.Code, prior.ReadyAt);
+                return new("error", "validation", error.Code, prior.ReadyAt, ChildExitCode: childExitCode);
             }
         }
-        return prior.State == "error" ? prior : new("error", prior.Phase, "capture_child_failed", prior.ReadyAt);
+        return new("error", prior.Phase, "capture_child_failed", prior.ReadyAt, ChildExitCode: childExitCode);
     }
     internal static async Task<int> Run(Guid id)
     {
@@ -78,7 +81,13 @@ internal static class CaptureWorker
             if (!ParentAlive(request) || Cancelled(directory)) { WriteProgress(directory, new("stopped", "cancel", "cancelled")); return 0; }
             var info = new ProcessStartInfo(Path.Combine(Security.RuntimeDirectory, "soda-asset-capture.exe")) { WorkingDirectory = Security.RuntimeDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "capture", "--seconds", "180", "--client-resources", Path.Combine(client, "ZenlessZoneZero_Data", "resources.assets"), "--out", output, "--game-region", "CN", "--account-label", "本地验证" }) info.ArgumentList.Add(arg);
-            child = Process.Start(info) ?? throw new ApiFault(500, "capture_child_start_failed");
+            try { child = Process.Start(info) ?? throw new ApiFault(500, "capture_child_start_failed"); }
+            catch (System.ComponentModel.Win32Exception error)
+            {
+                current = CaptureFailureDetails.ChildStartFailure(error, current);
+                WriteProgress(directory, current);
+                return 1;
+            }
             var gate = new object();
             var stderr = Task.Run(async () =>
             {
@@ -101,13 +110,13 @@ internal static class CaptureWorker
             await child.WaitForExitAsync(); await Task.WhenAll(stderr, stdout);
             lock (gate)
             {
-                current = watchdog && !cancelled ? new("error", current.ReadyAt is null ? "public_metadata" : "capture", "capture_watchdog_timeout", current.ReadyAt) : Finish(child.ExitCode, current, output, cancelled);
+                current = watchdog && !cancelled && current.State != "error" ? new("error", current.ReadyAt is null ? "public_metadata" : "capture", "capture_watchdog_timeout", current.ReadyAt, ChildExitCode: unchecked((uint)child.ExitCode)) : Finish(child.ExitCode, current, output, cancelled);
                 WriteProgress(directory, current);
             }
             return current.State == "error" ? 1 : 0;
         }
-        catch (ApiFault fault) { try { WriteProgress(directory, new("error", current.Phase, fault.Code, current.ReadyAt)); } catch { } return 1; }
-        catch { try { WriteProgress(directory, new("error", current.Phase, "worker_failed", current.ReadyAt)); } catch { } return 1; }
+        catch (ApiFault fault) { try { WriteProgress(directory, current.State == "error" ? current : new("error", current.Phase, fault.Code, current.ReadyAt)); } catch { } return 1; }
+        catch { try { WriteProgress(directory, current.State == "error" ? current : new("error", current.Phase, "worker_failed", current.ReadyAt)); } catch { } return 1; }
         finally
         {
             // Terminate only the process launched by this worker; never stop or uninstall a shared driver.

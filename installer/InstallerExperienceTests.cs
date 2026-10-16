@@ -59,7 +59,7 @@ internal static class InstallerExperienceTests
         var passed = 0;
         using var publishedCatalog = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(publishedPackage, "catalog.json")));
         var oldVersion = publishedCatalog.RootElement.GetProperty("version").GetString();
-        if (oldVersion is not ("1.0.10" or "1.1.0")) throw new Exception("published_upgrade_fixture_version");
+        if (oldVersion is not ("1.0.10" or "1.1.0" or "1.1.1")) throw new Exception("published_upgrade_fixture_version");
         void Check(bool value, string name) { if (!value) throw new Exception("published_" + oldVersion + "_upgrade_" + name); passed++; }
         var oldCatalog = AssetUninstall.PublishedCatalog(oldVersion);
         var oldStub = Path.Combine(publishedPackage, "uninstall", "Soda.AssetQuickRead.Setup.exe");

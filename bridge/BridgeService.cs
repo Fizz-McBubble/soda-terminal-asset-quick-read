@@ -18,7 +18,7 @@ internal sealed class ElevatedLauncher : IWorkerLauncher
 internal sealed record Pairing(string Origin, DateTimeOffset ExpiresAt);
 internal sealed record WorkerRequest(string ClientDirectory, int ParentProcessId, long ParentStartTicks);
 internal sealed record SafeCounts(int Discs = 0, int Engines = 0, int Agents = 0);
-internal sealed record Progress(string State, string Phase, string? Code, DateTimeOffset? ReadyAt = null, SafeCounts? Counts = null);
+internal sealed record Progress(string State, string Phase, string? Code, DateTimeOffset? ReadyAt = null, SafeCounts? Counts = null, uint? NativeErrorCode = null, uint? ChildExitCode = null);
 internal sealed class Job(Guid id, string owner, string target, string directory)
 {
     internal readonly Guid Id = id;
@@ -117,7 +117,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
     private async Task Launch(Job job)
     {
         try { await launcher.Start(job.Id, job.Directory); }
-        catch (System.ComponentModel.Win32Exception e) { lock (gate) if (!job.Cancelled) job.Progress = new("error", "uac", e.NativeErrorCode == 1223 ? "uac_declined" : "worker_launch_failed"); }
+        catch (System.ComponentModel.Win32Exception e) { lock (gate) if (!job.Cancelled) job.Progress = new("error", "uac", e.NativeErrorCode == 1223 ? "uac_declined" : "worker_launch_failed", NativeErrorCode: unchecked((uint)e.NativeErrorCode)); }
         catch (ApiFault e) { lock (gate) if (!job.Cancelled) job.Progress = new("error", "launch", e.Code); }
         catch { lock (gate) if (!job.Cancelled) job.Progress = new("error", "launch", "worker_launch_failed"); }
     }
@@ -135,7 +135,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
             Security.RejectLinks(path);
             if (new FileInfo(path).Length > 8192) throw new ApiFault(409, "progress_invalid");
             var progress = JsonSerializer.Deserialize<Progress>(File.ReadAllBytes(path), Program.Json) ?? throw new ApiFault(409, "progress_invalid");
-            if (progress.State is not ("starting" or "capturing" or "received" or "timed_out" or "stopped" or "error") || !CaptureWorker.SafePhase(progress.Phase) || !CaptureWorker.SafeCode(progress.Code)) throw new ApiFault(409, "progress_invalid");
+            if (progress.State is not ("starting" or "capturing" or "received" or "timed_out" or "stopped" or "error") || !CaptureWorker.SafePhase(progress.Phase) || !CaptureWorker.SafeCode(progress.Code) || !CaptureFailureDetails.Valid(progress)) throw new ApiFault(409, "progress_invalid");
             if (progress.State == "received") Snapshot.Read(Path.Combine(job.Directory, "asset-snapshot.json"));
             job.Progress = progress;
             // A worker must never leave the browser looking active indefinitely after disappearing.
@@ -149,7 +149,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
     private static object Status(Job job)
     {
         var ready = job.Progress.ReadyAt;
-        return new { jobId = job.Id, targetAccountId = job.Target, state = job.Progress.State, phase = job.Progress.Phase, code = job.Progress.Code, startedAt = job.StartedAt, readyAt = ready, deadline = ready?.AddSeconds(180), remainingSeconds = ready is null ? (int?)null : Math.Max(0, (int)Math.Ceiling((ready.Value.AddSeconds(180) - DateTimeOffset.UtcNow).TotalSeconds)), counts = job.Progress.Counts ?? new SafeCounts(), candidateAvailable = !job.Cancelled && job.Progress.State == "received" };
+        return new { jobId = job.Id, targetAccountId = job.Target, state = job.Progress.State, phase = job.Progress.Phase, code = job.Progress.Code, startedAt = job.StartedAt, readyAt = ready, deadline = ready?.AddSeconds(180), remainingSeconds = ready is null ? (int?)null : Math.Max(0, (int)Math.Ceiling((ready.Value.AddSeconds(180) - DateTimeOffset.UtcNow).TotalSeconds)), counts = job.Progress.Counts ?? new SafeCounts(), diagnostics = job.Progress.NativeErrorCode is null && job.Progress.ChildExitCode is null ? null : new CaptureDiagnostics(job.Progress.NativeErrorCode, job.Progress.ChildExitCode), candidateAvailable = !job.Cancelled && job.Progress.State == "received" };
     }
     private static void Cancel(Job job)
     {

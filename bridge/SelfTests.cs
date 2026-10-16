@@ -31,6 +31,7 @@ internal static class SelfTests
     internal static async Task<int> Run()
     {
         if (await HostSelfTests.RunChild() is { } childExit) return childExit;
+        await CaptureFailureSelfTests.Run();
         checks += await HostSelfTests.Run();
         // Synthetic-only files are deliberately retained for review; no cleanup touches existing candidates.
         var root = Path.Combine(AppContext.BaseDirectory, "self-test-" + Guid.NewGuid().ToString("N"));

@@ -28,6 +28,7 @@ internal static class ServiceReadiness
             ["1.0.4"] = ("7C4D4D02FCE0A3D1A9C219F712EADD43DBFBCF5DB297964C26C5641574C70621", "76E549E8E5542C20E519E3FCB2CB2725B8A3AD918E4D6BC101FD93AB53D9BDC6"),
             ["1.0.5"] = ("E876BA58EF0AD1FCDD8D0EA086456AA0257A26AA65CBD5438A4794371DB85361", "E1BA0B98936B3563D911026459FCE2C60B23328B3E3E23BDBF32CA5B73CFA4AB"),
             ["1.0.6"] = ("DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B", "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F"),
+            ["1.0.7"] = ("F253FED3EB9A93E0177ADA1B2F342FFF7E0FA75AC1D4CC486CD73934D364E8F8", "3FCDB206302D318780FD22289FD9563EC9AA5BD70CB8A582319613CA1F2C14E9"),
         };
 
     internal static bool MatchesPublishedBridgePin(string version, string exeSha256, string dllSha256)
@@ -48,8 +49,18 @@ internal static class ServiceReadiness
         "1.0.8" or "1.0.9" => "1.0.4",
         "1.0.10" => "1.0.5",
         "1.1.0" => "1.0.6",
+        "1.1.1" => "1.0.7",
         _ => null
     };
+    // The published 1.1.0 package contains component 1.0.6 bytes, but its
+    // compiled pipe/health identity is 1.0.4. Neither identity substitutes for
+    // the other: trust still requires the exact published component hashes.
+    private static string? PublishedWireVersion(string installationVersion) =>
+        installationVersion == "1.1.0" ? "1.0.4" : PublishedBridgeVersion(installationVersion);
+    internal static bool MatchesPublishedInstallation(string installationVersion, string wireVersion, string exeSha256, string dllSha256) =>
+        PublishedWireVersion(installationVersion) == wireVersion &&
+        PublishedBridgeVersion(installationVersion) is { } componentVersion &&
+        MatchesPublishedBridgePin(componentVersion, exeSha256, dllSha256);
     // Explicit per-call synthetic identity. No mutable process-wide trust hook.
     // Production callers never supply this; its constructor forbids real service coordinates.
     internal sealed record IsolatedTestContract
@@ -75,12 +86,12 @@ internal static class ServiceReadiness
         var expected = Path.Combine(test?.Root ?? DefaultRoot, "versions", installVersion);
         if (!Path.GetFullPath(directory).Equals(expected, StringComparison.OrdinalIgnoreCase) ||
             !Path.GetFullPath(executable).Equals(Path.Combine(expected, "Soda.AssetQuickRead.Bridge.exe"), StringComparison.OrdinalIgnoreCase) ||
-            PublishedBridgeVersion(installVersion) != version) return false;
+            PublishedWireVersion(installVersion) != version) return false;
         RejectLinks(executable); RejectLinks(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         using var exe = File.OpenRead(executable);
         using var dll = File.OpenRead(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         var exeHash = Convert.ToHexString(SHA256.HashData(exe)); var dllHash = Convert.ToHexString(SHA256.HashData(dll));
-        return test is null ? MatchesPublishedBridgePin(version, exeHash, dllHash) :
+        return test is null ? MatchesPublishedInstallation(installVersion, version, exeHash, dllHash) :
             version == "1.0.3" && installVersion == "1.0.7" && exeHash == test.ExeHash && dllHash == test.DllHash;
     }
     private static async Task<string?> ReadBanner(StreamReader reader, CancellationToken cancellation)

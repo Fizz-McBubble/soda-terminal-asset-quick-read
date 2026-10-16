@@ -5,7 +5,7 @@ namespace Soda.AssetQuickRead;
 
 internal static class LaunchIdentity
 {
-    internal const string Version = "1.0.7";
+    internal const string Version = "1.0.8";
     internal const string PipeName = "SodaTerminal.AssetQuickRead.Identity.50609";
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);

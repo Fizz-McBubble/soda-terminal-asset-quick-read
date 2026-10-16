@@ -19,6 +19,7 @@ internal static class Program
         try
         {
             if (args.SequenceEqual(new[] { "--self-test" })) return await SelfTests.Run();
+            if (args.SequenceEqual(new[] { "--failure-self-test" })) return await CaptureFailureSelfTests.Run();
             if (args.Length == 2 && args[0] == "--capture-worker" && Guid.TryParseExact(args[1], "D", out var id))
                 return await CaptureWorker.Run(id);
             protocolLaunch = args.Length == 2 && args[0] == "--protocol" && LaunchIdentity.ValidUri(args[1]);

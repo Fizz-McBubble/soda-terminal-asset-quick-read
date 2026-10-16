@@ -106,6 +106,22 @@ internal static class HostSelfTests
     {
         var checks = 0;
         void Check(bool value, string name) { if (!value) throw new Exception("host_test_failed:" + name); checks++; }
+        const string published110Exe = "DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B";
+        const string published110Dll = "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F";
+        Check(ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.4", published110Exe, published110Dll), "published_110_component_106_wire_104_accepted");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.6", published110Exe, published110Dll), "published_110_component_version_is_not_wire_version");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.4", new string('0', 64), published110Dll), "published_110_corrupt_exe_rejected");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.4", published110Exe, new string('0', 64)), "published_110_corrupt_dll_rejected");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.0.9", "1.0.4", published110Exe, published110Dll) &&
+            !ServiceReadiness.MatchesPublishedInstallation("unknown", "1.0.4", published110Exe, published110Dll), "published_110_wrong_installation_directory_rejected");
+        const string published111Exe = "F253FED3EB9A93E0177ADA1B2F342FFF7E0FA75AC1D4CC486CD73934D364E8F8";
+        const string published111Dll = "3FCDB206302D318780FD22289FD9563EC9AA5BD70CB8A582319613CA1F2C14E9";
+        Check(ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", published111Exe, published111Dll), "published_111_exact_component_and_wire_identity_accepted");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.8", published111Exe, published111Dll), "published_111_cannot_claim_current_wire_version");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", new string('0', 64), published111Dll), "published_111_corrupt_exe_rejected");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.1", "1.0.7", published111Exe, new string('0', 64)), "published_111_corrupt_dll_rejected");
+        Check(!ServiceReadiness.MatchesPublishedInstallation("1.1.0", "1.0.7", published111Exe, published111Dll) &&
+            !ServiceReadiness.MatchesPublishedInstallation("1.1.2", "1.0.7", published111Exe, published111Dll), "published_111_wrong_installation_directory_rejected");
         var self = Path.Combine(AppContext.BaseDirectory, "Soda.AssetQuickRead.Bridge.exe");
         using (var exe = new BinaryReader(File.OpenRead(self)))
         {
@@ -185,7 +201,7 @@ internal static class HostSelfTests
 
             var installationRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".."));
             var contract = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), selfExeHash, selfDllHash);
-            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", "1.0.7"), "isolated_versioned_root");
+            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", "1.0.8"), "isolated_versioned_root");
             using var legacyProcess = Launch(Start("legacy-1.0.3"))!;
             var legacyPid = legacyProcess.Id;
             var readyDeadline = DateTime.UtcNow.AddSeconds(5);
@@ -236,7 +252,7 @@ internal static class HostSelfTests
             foreach (var arg in new[] { "/c", "mklink", "/J", junction, installationRoot }) linkStart.ArgumentList.Add(arg);
             using (var link = Process.Start(linkStart)!) { await link.WaitForExitAsync(); Check(link.ExitCode == 0, "isolated_junction_created"); }
             var linked = new ServiceReadiness.IsolatedTestContract(junction, port, Pipe(id), selfExeHash, selfDllHash);
-            var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.7"), ExecutablePath = Path.Combine(junction, "versions", "1.0.7", "Soda.AssetQuickRead.Bridge.exe") };
+            var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.8"), ExecutablePath = Path.Combine(junction, "versions", "1.0.8", "Soda.AssetQuickRead.Bridge.exe") };
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: linked) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(linkedRecord, test: linked) && !legacyProcess.HasExited, "linked_root_refused_and_preserved");
             Console.Error.WriteLine("isolated_host_test_stage:switch_service");

@@ -278,7 +278,7 @@ internal sealed partial class InstallForm : Form
     private static async Task<bool> AlreadyRunning(string installed)
     {
         foreach (var port in Soda.AssetQuickRead.ServiceReadiness.ServicePorts)
-            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.7", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
+            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.8", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
         return false;
     }
     private async Task Dispatch(ProcessStartInfo start, bool service)
@@ -286,7 +286,7 @@ internal sealed partial class InstallForm : Form
         if (testOperations is not null) { await testOperations.Dispatch(start); return; }
         if (service)
         {
-            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.7", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.8", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
             return;
         }
         using var launched = Process.Start(start) ?? throw new IOException("launch_failed");
