@@ -12,6 +12,8 @@ internal static class Program
         if (args.Length == 3 && args[0] == "--upgrade-self-test") return UpgradeIdentityTests.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--retention-self-test") return VersionRetentionTests.Run(args[1]);
         if (args.Length == 4 && args[0] == "--protocol-self-test") return ProtocolDownloadTests.RunStandalone(args[1], args[2], args[3]);
+        if (args.Length == 5 && args[0] == "--service-recovery-self-test") return ServiceRecoveryTests.Run(args[1], args[2], args[3], args[4]);
+        if (args.Length == 4 && args[0] == "--published-service-recovery-self-test") return ServiceRecoveryTests.RunPublished113(args[1], args[2], args[3]);
         if (args.Length > 0 && args[0] == "--uninstall") return AssetUninstall.Run(args);
         if (args.Length != 0) return 64;
         ApplicationConfiguration.Initialize(); Application.Run(new InstallForm()); return 0;
@@ -232,7 +234,7 @@ internal sealed partial class InstallForm : Form
             }
             else if (testOperations is null)
             {
-                oldBridge = await Soda.AssetQuickRead.ServiceReadiness.InspectOldBridge(50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+                oldBridge = await Soda.AssetQuickRead.ServiceReadiness.InspectAnyKnownBridge();
             }
 
             if (oldBridge is not null)
@@ -285,7 +287,7 @@ internal sealed partial class InstallForm : Form
     private static async Task<bool> AlreadyRunning(string installed)
     {
         foreach (var port in Soda.AssetQuickRead.ServiceReadiness.ServicePorts)
-            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, "1.0.9", port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
+            if (await Soda.AssetQuickRead.ServiceReadiness.TrustedExisting(installed, InstallEngine.BridgeVersion, port, "SodaTerminal.AssetQuickRead.Identity.50609")) return true;
         return false;
     }
     private async Task Dispatch(ProcessStartInfo start, bool service)
@@ -293,7 +295,7 @@ internal sealed partial class InstallForm : Form
         if (testOperations is not null) { await testOperations.Dispatch(start); return; }
         if (service)
         {
-            await Soda.AssetQuickRead.ServiceReadiness.Start(start, "1.0.9", 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
+            await Soda.AssetQuickRead.ServiceReadiness.Start(start, InstallEngine.BridgeVersion, 50609, "SodaTerminal.AssetQuickRead.Identity.50609");
             return;
         }
         using var launched = Process.Start(start) ?? throw new IOException("launch_failed");

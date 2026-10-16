@@ -39,6 +39,7 @@ internal static class InstallerFeedback
         "verify",
         "register",
         "service_start",
+        "uninstall",
         "failed",
     };
 
@@ -52,6 +53,8 @@ internal static class InstallerFeedback
         "local_service_address_unavailable",
         "local_service_readiness_timeout",
         "local_service_start_failed",
+        "uninstaller_service_stop_failed",
+        "uninstaller_files_in_use",
         "protocol_source_rejected",
         "payload_hash_mismatch",
         "catalog_identity_rejected",

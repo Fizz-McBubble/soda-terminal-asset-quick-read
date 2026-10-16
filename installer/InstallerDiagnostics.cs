@@ -44,6 +44,20 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         "installed_version_path_conflict" => "版本目录的位置已有文件，安装器不会覆盖它。请反馈诊断，不要删除该文件或整个安装目录。",
         _ => "",
     };
+    internal static string UninstallMessage(string code) => code switch
+    {
+        "uninstaller_service_stop_failed" => "连接服务状态已变化，卸载已中止。",
+        "uninstaller_files_in_use" => "仍有程序文件被占用，卸载未完成。",
+        "installer_access_denied" => "卸载访问被拒绝，请检查权限或安全软件提示。",
+        "installer_cancelled" => "卸载已取消，已有文件和结果保留。",
+        _ => "卸载未完成，已有文件和结果保留。",
+    };
+    internal static string UninstallRecovery(string code) => code switch
+    {
+        "uninstaller_service_stop_failed" => "请先完成或取消读取，再重试卸载；仍失败请反馈诊断。工具不会结束未知进程。",
+        "uninstaller_files_in_use" => "请先完成或取消读取，再重试卸载。仍失败请反馈诊断，不要删除版本目录或结束未知进程。",
+        _ => "请重试卸载；仍失败请反馈诊断。读取结果与账户数据保留。",
+    };
     internal void Identity(string stage, bool registrationExists, string previousVersion, bool ownedShape, bool sameVersion, bool upgrading, bool stubExists, string knownPin, bool expectedMatch, bool registrySnapshotChanged, bool stubSnapshotChanged)
     {
         lock (gate)
@@ -64,7 +78,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     }
     internal void Record(string phase, string code = "started", int? item = null, string? source = null)
     {
-        if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "service_start" or "complete" or "failed" or "cancelled")) return;
+        if (phase is not ("prepare" or "payload_verify" or "copy" or "protocol" or "verify" or "register" or "service_start" or "uninstall" or "complete" or "failed" or "cancelled")) return;
         if (source is not (null or "github_raw" or "github_contents" or "verified_local" or "github_archive")) return;
         code = code == "started" || code == "request_started" || code == "verified" || code == "completed" ? code : Code(new IOException(code));
         phaseChanged?.Invoke(phase);

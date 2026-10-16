@@ -39,7 +39,7 @@ internal static class AssetUninstall
             InstallEngine.NoLinks(root);
             if (!relocated)
             {
-                if (MessageBox.Show("卸载资产快读？\n读取结果和账户数据会保留。", "Soda Terminal · 资产快读",
+                if (MessageBox.Show(Confirmation, "Soda Terminal · 资产快读",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 0;
                 var current = Environment.ProcessPath ?? throw new IOException("uninstaller_identity_missing");
                 var installed = Path.Combine(root, "uninstall.exe");
@@ -57,10 +57,40 @@ internal static class AssetUninstall
                 InstallEngine.Digest(Environment.ProcessPath!));
             MessageBox.Show("已卸载，读取结果和账户数据已保留。", "Soda Terminal · 资产快读"); return 0;
         }
-        catch { MessageBox.Show("卸载未完成，请关闭资产快读后重试。", "Soda Terminal · 资产快读", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+        catch (Exception error)
+        {
+            var code = FailureCode(error);
+            new InstallerDiagnostics(Path.Combine(root, "installer-diagnostics")).Record("uninstall", code);
+            MessageBox.Show(InstallerDiagnostics.UninstallMessage(code) + "\n" + InstallerDiagnostics.UninstallRecovery(code) + "\n诊断代码：" + code,
+                "卸载未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1;
+        }
     }
-    internal static void Remove(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store, string stubHash)
-        => RemoveCore(root, catalog, protocol, store, stubHash, PublishedCatalog, InstallEngine.Digest);
+    internal const string Confirmation = "卸载资产快读？\n请先在网页完成或取消读取。卸载会结束已核实归属的资产快读连接服务，不会结束未知进程；已提权的读取进程可能继续运行。\n读取结果和账户数据会保留。";
+    internal static string FailureCode(Exception error) => error is IOException io && io.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021)
+        ? "uninstaller_files_in_use" : InstallerDiagnostics.Code(error);
+    internal static void Remove(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store, string stubHash, CancellationToken cancellation = default)
+        => RemoveCore(root, catalog, protocol, store, stubHash, PublishedCatalog, InstallEngine.Digest,
+            () => StopOwnedService(root, catalog, cancellation));
+
+    internal static void StopOwnedService(string root, Catalog catalog, CancellationToken cancellation = default, Soda.AssetQuickRead.ServiceReadiness.IsolatedTestContract? test = null)
+    {
+        root = Path.GetFullPath(root);
+        // Synthetic filesystem tests never inspect or stop the real user's service.
+        if (test is null && !root.Equals(Path.GetFullPath(InstallEngine.DefaultRoot), StringComparison.OrdinalIgnoreCase)) return;
+        if (test is not null && !root.Equals(test.Root, StringComparison.OrdinalIgnoreCase)) throw new IOException("isolated_old_host_contract_required");
+        InstallEngine.NoLinks(root);
+        var exe = catalog.Files.Single(pin => pin.Path == "Soda.AssetQuickRead.Bridge.exe");
+        var dll = catalog.Files.Single(pin => pin.Path == "Soda.AssetQuickRead.Bridge.dll");
+        var current = new Soda.AssetQuickRead.ServiceReadiness.CurrentInstallation(catalog.Version, InstallEngine.BridgeVersion, exe.Sha256, dll.Sha256);
+        Task.Run(async () =>
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var bridge = await Soda.AssetQuickRead.ServiceReadiness.InspectAnyKnownBridge(cancellation, test, current);
+            if (bridge is null) return; // Unknown services receive no termination authority.
+            if (!await Soda.AssetQuickRead.ServiceReadiness.RecheckAndTerminate(bridge, cancellation, test, current))
+            { cancellation.ThrowIfCancellationRequested(); throw new IOException("uninstaller_service_stop_failed"); }
+        }).GetAwaiter().GetResult();
+    }
 
     internal static Catalog PublishedCatalog(string version) => version switch
     {
@@ -75,6 +105,7 @@ internal static class AssetUninstall
         "1.1.0" => Published110Catalog(),
         "1.1.1" => Published111Catalog(),
         "1.1.2" => Published112Catalog(),
+        "1.1.3" => Published113Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
@@ -98,22 +129,27 @@ internal static class AssetUninstall
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.2-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
+    private static Catalog Published113Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.3-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
 
     // Tests exercise real file removal with small synthetic catalogs, never the
     // current user's production root or registry stores.
     internal static void RemoveForTests(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store,
-        string stubHash, Func<string, Catalog> publishedCatalog, Func<string, string>? digest = null)
+        string stubHash, Func<string, Catalog> publishedCatalog, Func<string, string>? digest = null, Action? prepareOwnedService = null)
     {
         var candidate = Path.GetFullPath(root);
         var production = Path.GetFullPath(InstallEngine.DefaultRoot);
         if (candidate.Equals(production, StringComparison.OrdinalIgnoreCase) ||
             candidate.StartsWith(production + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
             store is RegistryUninstallStore) throw new InvalidOperationException("isolated_uninstall_test_required");
-        RemoveCore(candidate, catalog, protocol, store, stubHash, publishedCatalog, digest ?? InstallEngine.Digest);
+        RemoveCore(candidate, catalog, protocol, store, stubHash, publishedCatalog, digest ?? InstallEngine.Digest, prepareOwnedService);
     }
 
     private static void RemoveCore(string root, Catalog catalog, UserRegistration protocol, IUninstallStore store,
-        string stubHash, Func<string, Catalog> publishedCatalog, Func<string, string> digest)
+        string stubHash, Func<string, Catalog> publishedCatalog, Func<string, string> digest, Action? prepareOwnedService = null)
     {
         root = Path.GetFullPath(root);
         InstallEngine.NoLinks(root);
@@ -144,6 +180,9 @@ internal static class AssetUninstall
             bool Matches((string Path, CatalogFile Pin) file) => File.Exists(file.Path) &&
                 new FileInfo(file.Path).Length == file.Pin.Size && digest(file.Path) == file.Pin.Sha256;
             var ownedFiles = files.Where(Matches).ToArray();
+            AssertUnchanged();
+            prepareOwnedService?.Invoke();
+            AssertUnchanged();
             // Detect a busy tool before removing any component or entry. Unknown
             // and modified files remain outside this removal list.
             var handles = new List<FileStream>();
@@ -153,6 +192,8 @@ internal static class AssetUninstall
                 if (observedStubHash is not null) handles.Add(new FileStream(uninstall, FileMode.Open, FileAccess.ReadWrite, FileShare.Read));
                 AssertRegistrationUnchanged();
             }
+            catch (IOException error) when (error.HResult is unchecked((int)0x80070020) or unchecked((int)0x80070021))
+            { throw new IOException("uninstaller_files_in_use", error); }
             finally { foreach (var handle in handles) handle.Dispose(); }
             // Keep the stub protected from writes and replacement while managed
             // components are removed; do not rehash a large bundled EXE per file.

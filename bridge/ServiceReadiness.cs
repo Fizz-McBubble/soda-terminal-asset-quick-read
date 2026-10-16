@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Pipes;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -29,6 +30,34 @@ internal static class ServiceReadiness
     internal static int[] CandidatePorts(int port) => port == ServicePorts[0] ? ServicePorts : [port];
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
+    [DllImport("iphlpapi.dll", SetLastError = true)]
+    private static extern uint GetExtendedTcpTable(IntPtr table, ref int length, bool sorted, int addressFamily, int tableClass, uint reserved);
+
+    internal static bool ListenerOwnedBy(int port, int processId)
+    {
+        var length = 0;
+        try
+        {
+            if (GetExtendedTcpTable(IntPtr.Zero, ref length, false, 2, 3, 0) != 122 || length is < 4 or > 1048576) return false;
+            var table = Marshal.AllocHGlobal(length);
+            try
+            {
+                if (GetExtendedTcpTable(table, ref length, false, 2, 3, 0) != 0) return false;
+                var count = Marshal.ReadInt32(table);
+                if (count < 0 || count > (length - 4) / 24) return false;
+                var loopback = BitConverter.ToInt32(IPAddress.Loopback.GetAddressBytes());
+                for (var index = 0; index < count; index++)
+                {
+                    var row = IntPtr.Add(table, 4 + index * 24);
+                    var observedPort = (ushort)IPAddress.NetworkToHostOrder((short)(Marshal.ReadInt32(row, 8) & 0xffff));
+                    if (Marshal.ReadInt32(row) == 2 && Marshal.ReadInt32(row, 4) == loopback && observedPort == port && Marshal.ReadInt32(row, 20) == processId) return true;
+                }
+                return false;
+            }
+            finally { Marshal.FreeHGlobal(table); }
+        }
+        catch { return false; }
+    }
 
     private static readonly IReadOnlyDictionary<string, (string ExeSha256, string DllSha256)> PublishedBridgePins =
         new Dictionary<string, (string ExeSha256, string DllSha256)>(StringComparer.Ordinal)
@@ -42,6 +71,7 @@ internal static class ServiceReadiness
             ["1.0.6"] = ("DBF5294530FB807199480A91821F70E693E63416182682E4BCF87A1E7D015C4B", "9F86BF559DC891CDAFB67FB10C4A083699FCA88A8DD73CFBAC529A5B3D61A37F"),
             ["1.0.7"] = ("F253FED3EB9A93E0177ADA1B2F342FFF7E0FA75AC1D4CC486CD73934D364E8F8", "3FCDB206302D318780FD22289FD9563EC9AA5BD70CB8A582319613CA1F2C14E9"),
             ["1.0.8"] = ("B57D907F32763FA120BABF8CE9609869B3A1FCC9665D2DD2FCF3DDF6B57BD3BE", "B9AA35189B489F9F7788FBBB6876E74B7436255951AD8F587864112D4C85E5D6"),
+            ["1.0.9"] = ("1945B59744A3082927F8A9870FA690E121508DDBB0FBB9B57E416FE4FE82BDFD", "14716C679EF718F52D43D13FE88F040B61C458FDBDF75068AD1AAFEB9A420728"),
         };
 
     internal static bool MatchesPublishedBridgePin(string version, string exeSha256, string dllSha256)
@@ -64,6 +94,7 @@ internal static class ServiceReadiness
         "1.1.0" => "1.0.6",
         "1.1.1" => "1.0.7",
         "1.1.2" => "1.0.8",
+        "1.1.3" => "1.0.9",
         _ => null
     };
     // The published 1.1.0 package contains component 1.0.6 bytes, but its
@@ -84,28 +115,38 @@ internal static class ServiceReadiness
         internal string PipeName { get; }
         internal string ExeHash { get; }
         internal string DllHash { get; }
+        internal int[] Ports { get; private init; }
+        internal bool PublishedOnly { get; private init; }
         internal IsolatedTestContract(string root, int port, string pipeName, string exeHash, string dllHash)
         {
-            Root = Path.GetFullPath(root); Port = port; PipeName = pipeName; ExeHash = exeHash; DllHash = dllHash;
-            if (Root.Equals(DefaultRoot, StringComparison.OrdinalIgnoreCase) || port == 50609 ||
+            Root = Path.GetFullPath(root); Port = port; Ports = [port]; PipeName = pipeName; ExeHash = exeHash; DllHash = dllHash;
+            if (Root.Equals(DefaultRoot, StringComparison.OrdinalIgnoreCase) || Root.StartsWith(DefaultRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || ServicePorts.Contains(port) || port is < 1024 or > 65535 ||
                 !pipeName.StartsWith("SodaTerminal.AssetQuickRead.HostSelfTest.", StringComparison.Ordinal) ||
                 !Guid.TryParseExact(pipeName["SodaTerminal.AssetQuickRead.HostSelfTest.".Length..], "N", out _))
                 throw new IOException("isolated_old_host_contract_required");
         }
+        internal static IsolatedTestContract ForPublishedFixtures(string root, int[] ports, string pipeName)
+        {
+            if (ports.Length is < 1 or > 3 || ports.Distinct().Count() != ports.Length || ports.Any(port => ServicePorts.Contains(port) || port is < 1024 or > 65535))
+                throw new IOException("isolated_old_host_contract_required");
+            return new(root, ports[0], pipeName, "", "") { Ports = ports.ToArray(), PublishedOnly = true };
+        }
     }
-    private static bool AllowedOldFiles(string executable, string directory, string version, int port, string pipeName, IsolatedTestContract? test)
+    internal sealed record CurrentInstallation(string Version, string WireVersion, string ExeSha256, string DllSha256);
+    private static bool AllowedOldFiles(string executable, string directory, string version, int port, string pipeName, IsolatedTestContract? test, CurrentInstallation? current = null)
     {
-        if (test is null ? port != 50609 || pipeName != "SodaTerminal.AssetQuickRead.Identity.50609" : port != test.Port || pipeName != test.PipeName) return false;
+        if (test is null ? !ServicePorts.Contains(port) || pipeName != "SodaTerminal.AssetQuickRead.Identity.50609" : !test.Ports.Contains(port) || pipeName != test.PipeName) return false;
         var installVersion = Path.GetFileName(directory);
         var expected = Path.Combine(test?.Root ?? DefaultRoot, "versions", installVersion);
         if (!Path.GetFullPath(directory).Equals(expected, StringComparison.OrdinalIgnoreCase) ||
             !Path.GetFullPath(executable).Equals(Path.Combine(expected, "Soda.AssetQuickRead.Bridge.exe"), StringComparison.OrdinalIgnoreCase) ||
-            PublishedWireVersion(installVersion) != version) return false;
+            !(PublishedWireVersion(installVersion) == version || current is not null && current.Version == installVersion && current.WireVersion == version)) return false;
         RejectLinks(executable); RejectLinks(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         using var exe = File.OpenRead(executable);
         using var dll = File.OpenRead(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         var exeHash = Convert.ToHexString(SHA256.HashData(exe)); var dllHash = Convert.ToHexString(SHA256.HashData(dll));
-        return test is null ? MatchesPublishedInstallation(installVersion, version, exeHash, dllHash) :
+        if (current is not null && installVersion == current.Version && version == current.WireVersion && exeHash == current.ExeSha256 && dllHash == current.DllSha256) return true;
+        return test is null || test.PublishedOnly ? MatchesPublishedInstallation(installVersion, version, exeHash, dllHash) :
             version == "1.0.3" && installVersion == "1.0.7" && exeHash == test.ExeHash && dllHash == test.DllHash;
     }
     private static async Task<string?> ReadBanner(StreamReader reader, CancellationToken cancellation)
@@ -147,6 +188,8 @@ internal static class ServiceReadiness
             if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) throw new IOException("linked_path_rejected");
     }
     internal static async Task<bool> TrustedPipeOwner(string expectedDirectory, string version, string pipeName, CancellationToken cancellation = default)
+        => await TrustedPipeProcess(expectedDirectory, version, pipeName, cancellation) is not null;
+    private static async Task<int?> TrustedPipeProcess(string expectedDirectory, string version, string pipeName, CancellationToken cancellation)
     {
         try
         {
@@ -154,20 +197,20 @@ internal static class ServiceReadiness
             timeout.CancelAfter(500);
             using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.In, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             await pipe.ConnectAsync(timeout.Token);
-            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid)) return false;
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid)) return null;
             using var owner = Process.GetProcessById((int)pid);
             var executable = owner.MainModule?.FileName;
-            if (executable is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" || !SameFiles(expectedDirectory, Path.GetDirectoryName(executable)!)) return false;
+            if (executable is null || Path.GetFileName(executable) != "Soda.AssetQuickRead.Bridge.exe" || !SameFiles(expectedDirectory, Path.GetDirectoryName(executable)!)) return null;
             using var reader = new StreamReader(pipe);
-            return await ReadBanner(reader, timeout.Token) == "soda-asset-quick-read/" + version;
+            return await ReadBanner(reader, timeout.Token) == "soda-asset-quick-read/" + version ? (int)pid : null;
         }
-        catch { return false; }
+        catch { return null; }
     }
     internal static async Task<bool> TrustedExisting(string expectedDirectory, string version, int port, string pipeName, CancellationToken cancellation = default)
     {
         try
         {
-            if (!await TrustedPipeOwner(expectedDirectory, version, pipeName, cancellation)) return false;
+            if (await TrustedPipeProcess(expectedDirectory, version, pipeName, cancellation) is not { } pid || !ListenerOwnedBy(port, pid)) return false;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             timeout.CancelAfter(1000);
             using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
@@ -215,7 +258,14 @@ internal static class ServiceReadiness
 
     internal sealed record VerifiedOldBridge(int ProcessId, long StartTimeTicks, string ExecutablePath, string Directory, string Version, int Port, string PipeName);
 
-    internal static async Task<VerifiedOldBridge?> InspectOldBridge(int port, string pipeName, CancellationToken cancellation = default, IsolatedTestContract? test = null)
+    internal static async Task<VerifiedOldBridge?> InspectAnyKnownBridge(CancellationToken cancellation = default, IsolatedTestContract? test = null, CurrentInstallation? current = null)
+    {
+        foreach (var port in test?.Ports ?? ServicePorts)
+            if (await InspectOldBridge(port, test?.PipeName ?? "SodaTerminal.AssetQuickRead.Identity.50609", cancellation, test, current) is { } bridge) return bridge;
+        return null;
+    }
+
+    internal static async Task<VerifiedOldBridge?> InspectOldBridge(int port, string pipeName, CancellationToken cancellation = default, IsolatedTestContract? test = null, CurrentInstallation? current = null)
     {
         try
         {
@@ -248,12 +298,12 @@ internal static class ServiceReadiness
             var observedVersion = banner["soda-asset-quick-read/".Length..];
             if (string.IsNullOrWhiteSpace(observedVersion)) return null;
 
-            if (!AllowedOldFiles(executable, directory, observedVersion, port, pipeName, test)) return null;
+            if (!AllowedOldFiles(executable, directory, observedVersion, port, pipeName, test, current) || !ListenerOwnedBy(port, (int)pid)) return null;
 
             using var httpTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             httpTimeout.CancelAfter(1000);
             using var http = new HttpClient(new HttpClientHandler { UseProxy = false });
-            http.DefaultRequestHeaders.Host = $"127.0.0.1:{port}";
+            http.DefaultRequestHeaders.Host = $"127.0.0.1:{(ServicePorts.Contains(port) ? port : ServicePorts[0])}";
             using var response = await http.GetAsync($"http://127.0.0.1:{port}/health", HttpCompletionOption.ResponseHeadersRead, httpTimeout.Token);
             if (!response.IsSuccessStatusCode) return null;
             using var body = await response.Content.ReadAsStreamAsync(httpTimeout.Token);
@@ -269,20 +319,21 @@ internal static class ServiceReadiness
             var health = doc.RootElement;
             if (health.GetProperty("service").GetString() != "soda-asset-quick-read" ||
                 health.GetProperty("version").GetString() != observedVersion ||
-                health.GetProperty("protocolVersion").GetInt32() != 1) return null;
+                health.GetProperty("protocolVersion").GetInt32() != 1 || owner.HasExited ||
+                owner.StartTime.ToUniversalTime().Ticks != startTicks || !ListenerOwnedBy(port, (int)pid)) return null;
 
             return new VerifiedOldBridge((int)pid, startTicks, executable, directory, observedVersion, port, pipeName);
         }
         catch { return null; }
     }
 
-    internal static async Task<bool> RecheckAndTerminate(VerifiedOldBridge oldBridge, CancellationToken cancellation = default, IsolatedTestContract? test = null)
+    internal static async Task<bool> RecheckAndTerminate(VerifiedOldBridge oldBridge, CancellationToken cancellation = default, IsolatedTestContract? test = null, CurrentInstallation? current = null)
     {
         try
         {
             // Rebuild authority from the OS pipe, actual module path, public health
             // and immutable pins. A record supplied by a caller grants no authority.
-            if (await InspectOldBridge(oldBridge.Port, oldBridge.PipeName, cancellation, test) != oldBridge) return false;
+            if (await InspectOldBridge(oldBridge.Port, oldBridge.PipeName, cancellation, test, current) != oldBridge) return false;
             using var owner = Process.GetProcessById(oldBridge.ProcessId);
             if (owner.HasExited) return false;
             try
@@ -308,8 +359,8 @@ internal static class ServiceReadiness
             // Keep both components open without write/delete sharing through Kill.
             using var exeLock = File.OpenRead(oldBridge.ExecutablePath);
             using var dllLock = File.OpenRead(Path.Combine(oldBridge.Directory, "Soda.AssetQuickRead.Bridge.dll"));
-            if (!AllowedOldFiles(oldBridge.ExecutablePath, oldBridge.Directory, oldBridge.Version, oldBridge.Port, oldBridge.PipeName, test) ||
-                owner.HasExited || owner.StartTime.ToUniversalTime().Ticks != oldBridge.StartTimeTicks) return false;
+            if (!AllowedOldFiles(oldBridge.ExecutablePath, oldBridge.Directory, oldBridge.Version, oldBridge.Port, oldBridge.PipeName, test, current) ||
+                owner.HasExited || owner.StartTime.ToUniversalTime().Ticks != oldBridge.StartTimeTicks || !ListenerOwnedBy(oldBridge.Port, oldBridge.ProcessId)) return false;
             owner.Kill();
             await owner.WaitForExitAsync(cancellation).WaitAsync(TimeSpan.FromSeconds(4), cancellation);
 

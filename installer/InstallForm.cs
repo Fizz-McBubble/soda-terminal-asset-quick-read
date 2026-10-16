@@ -95,10 +95,12 @@ internal sealed partial class InstallForm
     private async Task UninstallAsync()
     {
         if ((previewOnly && testOperations is null) || running is not null || serviceStarting) return;
-        if (testOperations is null && MessageBox.Show("卸载资产快读？\n读取结果和账户数据会保留。", "Soda Terminal · 资产快读",
+        if (testOperations is null && MessageBox.Show(AssetUninstall.Confirmation, "Soda Terminal · 资产快读",
             MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         running = new CancellationTokenSource(); action.Enabled = cancel.Enabled = uninstall.Enabled = false;
         text.Text = "正在卸载资产快读…"; progress.Visible = true; progress.Indeterminate = true;
+        var diagnostics = activeDiagnostics ??= new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"));
+        diagnostics.Record("uninstall");
         try
         {
             if (testOperations is not null) await testOperations.Uninstall();
@@ -106,7 +108,7 @@ internal sealed partial class InstallForm
             {
             using var stub = InstallRegistration.OpenUninstaller();
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stub));
-            await Task.Run(() => AssetUninstall.Remove(InstallEngine.DefaultRoot, InstallEngine.ReadCatalog(), new UserRegistration(), new RegistryUninstallStore(), hash));
+            await Task.Run(() => AssetUninstall.Remove(InstallEngine.DefaultRoot, InstallEngine.ReadCatalog(), new UserRegistration(), new RegistryUninstallStore(), hash, running.Token));
             }
             text.Text = "已卸载，读取结果和账户数据已保留。";
             UpdateDetails("资产快读的程序与入口已移除。读取结果和未知文件保留，可重新安装。");
@@ -114,8 +116,20 @@ internal sealed partial class InstallForm
             card.Controls["version"]!.Text = "安装版本 " + InstallEngine.Version;
             progress.Value = 100;
         }
-        catch (Exception error) { text.Text = "卸载未完成，请关闭资产快读后重试。"; UpdateDetails(error.Message); progress.Visible = false; }
+        catch (Exception error)
+        {
+            var code = AssetUninstall.FailureCode(error); diagnostics.Record("uninstall", code);
+            ShowUninstallError(code, diagnostics);
+        }
         finally { progress.Indeterminate = false; running.Dispose(); running = null; action.Enabled = cancel.Enabled = uninstall.Enabled = true; }
+    }
+    internal void ShowUninstallError(string code, InstallerDiagnostics? diagnostics = null)
+    {
+        text.Text = InstallerDiagnostics.UninstallMessage(code);
+        UpdateDetails(InstallerDiagnostics.UninstallRecovery(code) + "\r\n诊断代码：" + code + "\r\n可点击“反馈安装问题”提交有限诊断。");
+        progress.Visible = false;
+        lastFeedbackReport = diagnostics?.BuildSafeReport(code) ?? InstallerFeedback.CreateSafeReport("uninstall", code, 0, []);
+        lastFeedbackUrl = InstallerFeedback.BuildLaunchUrl(lastFeedbackReport); feedback.Visible = true;
     }
     internal void ShowInstallError(string message, InstallerDiagnostics? diagnostics = null)
     {
