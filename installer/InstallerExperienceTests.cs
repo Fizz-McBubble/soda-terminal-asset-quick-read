@@ -48,11 +48,32 @@ internal static class InstallerExperienceTests
         using var self = stub(); var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(self));
         if (InstallEngine.Digest(Path.Combine(install, "uninstall.exe")) != hash) throw new Exception("actual_package_uninstaller_identity");
         Directory.CreateDirectory(Path.Combine(install, "jobs")); var keep = Path.Combine(install, "jobs", "preserve.json"); File.WriteAllText(keep, "SYNTHETIC_RESULT");
+        var unknown = Path.Combine(version, "user-preserve.txt"); File.WriteAllText(unknown, "UNKNOWN_FILE");
         AssetUninstall.Remove(install, catalog, registration, store, hash);
-        if (protocol.Value != null || store.Value != null || File.Exists(shortcut) || File.Exists(Path.Combine(install, "uninstall.exe")) || catalog.Files.Any(pin => File.Exists(InstallEngine.Safe(version, pin.Path)))) throw new Exception("actual_package_uninstall_left_managed_files");
+        if (protocol.Value != null || store.Value != null || File.Exists(shortcut) || File.Exists(Path.Combine(install, "uninstall.exe"))) throw new Exception("actual_package_uninstall_left_managed_entries");
+        AssertRemovedExceptSharedDriver(version, catalog);
         if (File.ReadAllText(keep) != "SYNTHETIC_RESULT") throw new Exception("actual_package_uninstall_result_changed");
-        if (legacyFixture != null && (AssetUninstall.Published100Catalog().Files.Any(pin => File.Exists(InstallEngine.Safe(legacy, pin.Path))) || File.ReadAllText(Path.Combine(legacy, "user.txt")) != "PRESERVE")) throw new Exception("legacy_package_uninstall_or_preservation");
-        return 5;
+        if (File.ReadAllText(unknown) != "UNKNOWN_FILE") throw new Exception("actual_package_uninstall_unknown_changed");
+        if (legacyFixture != null)
+        {
+            AssertRemovedExceptSharedDriver(legacy, AssetUninstall.Published100Catalog());
+            if (File.ReadAllText(Path.Combine(legacy, "user.txt")) != "PRESERVE") throw new Exception("legacy_package_uninstall_or_preservation");
+        }
+        return 7;
+
+        static void AssertRemovedExceptSharedDriver(string directory, Catalog expectedCatalog)
+        {
+            foreach (var pin in expectedCatalog.Files)
+            {
+                var path = InstallEngine.Safe(directory, pin.Path);
+                if (pin.Path.Equals("runtime/WinDivert64.sys", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!File.Exists(path) || new FileInfo(path).Length != pin.Size || InstallEngine.Digest(path) != pin.Sha256)
+                        throw new Exception("actual_package_uninstall_shared_driver_changed");
+                }
+                else if (File.Exists(path)) throw new Exception("actual_package_uninstall_left_managed_files:" + pin.Path);
+            }
+        }
     }
     internal static int RunPublishedUpgrade(string baseRoot, string archive, Catalog catalog, string privatePayload, string publishedPackage)
     {

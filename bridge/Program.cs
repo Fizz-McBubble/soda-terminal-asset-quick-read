@@ -26,6 +26,11 @@ internal static class Program
             if (args.Length != 0 && !args.SequenceEqual(new[] { "--serve" }) && !protocolLaunch) return 64;
             return await RunHost(Port, LaunchIdentity.PipeName, "Local\\SodaTerminal.AssetQuickRead.50609", protocolLaunch);
         }
+        catch (Exception error) when (args.SequenceEqual(new[] { "--failure-self-test" }))
+        {
+            Console.Error.WriteLine("failure_self_test_failed:" + error.GetType().Name + ":" + error.Message);
+            return 1;
+        }
         catch { Console.Error.WriteLine("bridge_start_failed"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 1; }
     }
     // Isolated options are reachable only from the synthetic --self-test path.
@@ -175,6 +180,11 @@ internal static class Program
         await response.Body.WriteAsync(bytes);
     }
 }
-internal sealed class ApiFault(int status, string code) : Exception(code)
-{ internal int Status { get; } = status; internal string Code { get; } = code; }
+internal sealed class ApiFault(int status, string code, string? candidateStatus = null, int? candidateIssueCount = null) : Exception(code)
+{
+    internal int Status { get; } = status;
+    internal string Code { get; } = code;
+    internal string? CandidateStatus { get; } = candidateStatus;
+    internal int? CandidateIssueCount { get; } = candidateIssueCount;
+}
 internal sealed record Reply(int Status, object Body);

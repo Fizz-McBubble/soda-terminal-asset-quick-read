@@ -11,6 +11,11 @@ internal static class CaptureFailureSelfTests
         internal int Native => native;
         public Task Start(Guid id, string directory) => Task.FromException(new System.ComponentModel.Win32Exception(native));
     }
+    private static async Task<int> ReplyStatus(Func<Task<Reply>> action)
+    {
+        try { return (await action()).Status; }
+        catch (ApiFault error) { return error.Status; }
+    }
     internal static async Task<int> Run()
     {
         var root = Path.Combine(AppContext.BaseDirectory, "failure-self-test-" + Guid.NewGuid().ToString("N"));
@@ -44,12 +49,30 @@ internal static class CaptureFailureSelfTests
         var candidate = Path.Combine(root, "candidate.json"); Security.WriteNew(candidate, SelfTests.Fixture());
         foreach (var exit in new[] { 0, 2 })
         {
-            Check(CaptureWorker.Finish(exit, initial, candidate, false) is { State: "received", Code: "response_semantics_unverified", ChildExitCode: var receivedExit } && receivedExit == (uint)exit, "candidate_preserved");
+            Check(CaptureWorker.Finish(exit, initial, candidate, false) is { State: "received", Code: "response_semantics_unverified", ChildExitCode: var receivedExit, CandidateStatus: "response_semantics_unverified", CandidateIssueCount: 0 } && receivedExit == (uint)exit, "candidate_preserved");
             Check(CaptureWorker.Finish(exit, new("error", "capture", "capture_receive_failed", NativeErrorCode: 5), candidate, false) is { Code: "capture_receive_failed", NativeErrorCode: 5 }, "candidate_does_not_hide_known_failure");
         }
+        var validationIssues = Enumerable.Range(0, 150).Select(index => (object)new { code = "private_issue_" + index }).ToArray();
+        var invalidCandidate = Path.Combine(root, "validation-failed.json"); Security.WriteNew(invalidCandidate, SelfTests.Fixture("validation_failed", issues: validationIssues, stopReason: "capture_failed"));
+        var validationFailure = CaptureWorker.Finish(2, initial, invalidCandidate, false);
+        Check(validationFailure is { State: "error", Phase: "validation", Code: "candidate_validation_issues", CandidateStatus: "validation_failed", CandidateIssueCount: 100 }, "validation_issues_classified_and_bounded");
+        Check(!JsonSerializer.Serialize(validationFailure, Program.Json).Contains("private_issue_", StringComparison.Ordinal), "validation_issue_bodies_not_forwarded");
+        var missingIssues = Path.Combine(root, "missing-issues.json"); Security.WriteNew(missingIssues, new { status = "validation_failed", stop_reason = "capture_failed" });
+        Check(CaptureWorker.Finish(2, initial, missingIssues, false) is { Code: "candidate_validation_issues", CandidateStatus: "validation_failed", CandidateIssueCount: null }, "missing_issues_count_stays_unknown");
+        var incompleteCandidate = Path.Combine(root, "coverage-incomplete.json"); Security.WriteNew(incompleteCandidate, SelfTests.Fixture(all: false));
+        Check(CaptureWorker.Finish(2, initial, incompleteCandidate, false) is { State: "error", Code: "candidate_coverage_incomplete", CandidateStatus: "response_semantics_unverified", CandidateIssueCount: 0 }, "coverage_failure_classified");
+        var unknownCandidate = Path.Combine(root, "unknown-status.json");
+        const string privateStatus = "C:\\private\\arbitrary_status";
+        Security.WriteNew(unknownCandidate, SelfTests.Fixture(privateStatus));
+        var unknownFailure = CaptureWorker.Finish(2, initial, unknownCandidate, false);
+        Check(unknownFailure is { State: "error", Code: "candidate_status_invalid", CandidateStatus: "unknown", CandidateIssueCount: 0 }, "unknown_status_collapsed");
+        Check(!JsonSerializer.Serialize(unknownFailure, Program.Json).Contains(privateStatus, StringComparison.Ordinal), "raw_status_not_forwarded");
+        var timedOutCandidate = Path.Combine(root, "timed-out.json"); Security.WriteNew(timedOutCandidate, SelfTests.Fixture("timed_out", stopReason: "timed_out"));
+        Check(CaptureWorker.Finish(2, initial, timedOutCandidate, false) is { State: "timed_out", Code: "timed_out", CandidateStatus: "timed_out", CandidateIssueCount: 0 }, "timeout_classified");
         Check(CaptureFailureDetails.ChildStartFailure(new System.ComponentModel.Win32Exception(2), initial) is { Code: "capture_child_start_failed", NativeErrorCode: 2, Phase: "launch" }, "child_start_win32_failure");
         var old = JsonSerializer.Deserialize<Progress>("{\"state\":\"error\",\"phase\":\"public_metadata\",\"code\":\"public_query_http_rejected\"}", Program.Json)!;
-        Check(old.NativeErrorCode is null && old.ChildExitCode is null && CaptureWorker.SafeCode(old.Code), "old_progress_json");
+        Check(old.NativeErrorCode is null && old.ChildExitCode is null && old.CandidateStatus is null && old.CandidateIssueCount is null && CaptureWorker.SafeCode(old.Code), "old_progress_json");
+        Check(CaptureWorker.Finish(1, new("capturing", "capture", null, DateTimeOffset.UtcNow), missing, true) is { State: "stopped", Code: "cancelled", CandidateStatus: "cancelled" }, "cancel_classified");
         foreach (var code in new[] { "timed_out", "cancelled", "staged_for_field_review", "response_semantics_unverified", "candidate_size_invalid", "capture_already_active", "worker_launch_failed" })
             Check(CaptureWorker.SafeCode(code), "existing_bridge_code");
         Check(!CaptureWorker.SafeCode("arbitrary:123") && !CaptureWorker.SafeCode("private2"), "safe_code_not_widened");
@@ -75,12 +98,41 @@ internal static class CaptureFailureSelfTests
             else
             {
                 var directory = Security.JobDirectory(id, jobs);
+                var receivedCandidate = Path.Combine(directory, "asset-snapshot.json");
+                CaptureWorker.WriteProgress(directory, new("received", "complete", "response_semantics_unverified", ChildExitCode: 2, CandidateStatus: "response_semantics_unverified", CandidateIssueCount: 0));
+                var missingCandidate = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(missingCandidate.GetProperty("state").GetString() == "starting" && missingCandidate.GetProperty("candidateAvailable").GetBoolean() == false, "missing_candidate_keeps_previous_safe_status");
+                Security.WriteNew(receivedCandidate, SelfTests.Fixture());
+                var received = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(received.GetProperty("code").GetString() == "response_semantics_unverified" && received.GetProperty("candidateAvailable").GetBoolean(), "received_candidate_available");
+                Check(received.GetProperty("diagnostics").GetProperty("candidateStatus").GetString() == "response_semantics_unverified" && received.GetProperty("diagnostics").GetProperty("candidateIssueCount").GetInt32() == 0, "received_candidate_evidence_roundtrip");
+                Check(await ReplyStatus(() => service.Dispatch("GET", route + "/result", origin, auth, [])) == 200, "received_candidate_result");
+                File.WriteAllText(receivedCandidate, JsonSerializer.Serialize(SelfTests.Fixture("validation_failed", issues: [new { code = "synthetic_issue" }], stopReason: "capture_failed"), Program.Json));
+                var invalidReceived = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(invalidReceived.GetProperty("state").GetString() == "error" && invalidReceived.GetProperty("code").GetString() == "candidate_validation_issues" && invalidReceived.GetProperty("candidateAvailable").GetBoolean() == false, "invalid_received_candidate_rejected");
+                Check(invalidReceived.GetProperty("diagnostics").GetProperty("childExitCode").GetUInt32() == 2 && invalidReceived.GetProperty("diagnostics").GetProperty("candidateStatus").GetString() == "validation_failed" && invalidReceived.GetProperty("diagnostics").GetProperty("candidateIssueCount").GetInt32() == 1, "invalid_received_candidate_preserves_progress_evidence");
+                Check(await ReplyStatus(() => service.Dispatch("GET", route + "/result", origin, auth, [])) == 409, "invalid_received_candidate_result_blocked");
                 var failed = CaptureWorker.Finish(unchecked((int)0xC0000005), CaptureWorker.OnStderr("error:capture_open_failed_win32:577", initial), missing, false);
                 CaptureWorker.WriteProgress(directory, failed);
                 var status = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
                 Check(status.GetProperty("code").GetString() == "capture_open_failed" && status.GetProperty("diagnostics").GetProperty("nativeErrorCode").GetUInt32() == 577 && status.GetProperty("diagnostics").GetProperty("childExitCode").GetUInt32() == 0xC0000005, "http_diagnostics_roundtrip");
+                var issueFailure = CaptureWorker.Finish(2, initial, invalidCandidate, false);
+                CaptureWorker.WriteProgress(directory, issueFailure);
+                var issueStatus = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(issueStatus.GetProperty("code").GetString() == "candidate_validation_issues" && issueStatus.GetProperty("candidateAvailable").GetBoolean() == false, "validation_issue_rejected_by_http");
+                Check(issueStatus.GetProperty("diagnostics").GetProperty("candidateStatus").GetString() == "validation_failed" && issueStatus.GetProperty("diagnostics").GetProperty("candidateIssueCount").GetInt32() == 100, "validation_issue_http_evidence");
+                Check(!issueStatus.GetRawText().Contains("private_issue_", StringComparison.Ordinal), "validation_issue_http_redacted");
+                Check(await ReplyStatus(() => service.Dispatch("GET", route + "/result", origin, auth, [])) == 409, "validation_issue_result_blocked");
+                CaptureWorker.WriteProgress(directory, CaptureWorker.Finish(2, initial, incompleteCandidate, false));
+                var coverageStatus = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(coverageStatus.GetProperty("code").GetString() == "candidate_coverage_incomplete" && coverageStatus.GetProperty("candidateAvailable").GetBoolean() == false, "coverage_failure_rejected_by_http");
+                Check(await ReplyStatus(() => service.Dispatch("GET", route + "/result", origin, auth, [])) == 409, "coverage_failure_result_blocked");
+                CaptureWorker.WriteProgress(directory, unknownFailure);
+                var unknownStatus = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);
+                Check(unknownStatus.GetProperty("code").GetString() == "candidate_status_invalid" && unknownStatus.GetProperty("diagnostics").GetProperty("candidateStatus").GetString() == "unknown", "unknown_status_http_collapsed");
+                Check(!unknownStatus.GetRawText().Contains(privateStatus, StringComparison.Ordinal), "unknown_status_http_redacted");
                 var path = Path.Combine(directory, "progress.json");
-                foreach (var invalid in new[] { "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed\",\"nativeErrorCode\":4294967296}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed\",\"childExitCode\":-1}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"public_query_http_rejected\",\"nativeErrorCode\":5}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed_win32:5\"}" })
+                foreach (var invalid in new[] { "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed\",\"nativeErrorCode\":4294967296}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed\",\"childExitCode\":-1}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"public_query_http_rejected\",\"nativeErrorCode\":5}", "{\"state\":\"error\",\"phase\":\"capture\",\"code\":\"capture_open_failed_win32:5\"}", "{\"state\":\"error\",\"phase\":\"validation\",\"code\":\"candidate_validation_issues\",\"candidateStatus\":\"private raw status\"}", "{\"state\":\"error\",\"phase\":\"validation\",\"code\":\"candidate_validation_issues\",\"candidateStatus\":\"validation_failed\",\"candidateIssueCount\":-1}", "{\"state\":\"error\",\"phase\":\"validation\",\"code\":\"candidate_validation_issues\",\"candidateStatus\":\"validation_failed\",\"candidateIssueCount\":101}", "{\"state\":\"error\",\"phase\":\"validation\",\"code\":\"candidate_validation_issues\",\"candidateIssueCount\":0}" })
                 {
                     File.WriteAllText(path, invalid);
                     var rejected = JsonSerializer.SerializeToElement((await service.Dispatch("GET", route, origin, auth, [])).Body, Program.Json);

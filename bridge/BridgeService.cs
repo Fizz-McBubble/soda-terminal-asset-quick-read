@@ -18,7 +18,7 @@ internal sealed class ElevatedLauncher : IWorkerLauncher
 internal sealed record Pairing(string Origin, DateTimeOffset ExpiresAt);
 internal sealed record WorkerRequest(string ClientDirectory, int ParentProcessId, long ParentStartTicks);
 internal sealed record SafeCounts(int Discs = 0, int Engines = 0, int Agents = 0);
-internal sealed record Progress(string State, string Phase, string? Code, DateTimeOffset? ReadyAt = null, SafeCounts? Counts = null, uint? NativeErrorCode = null, uint? ChildExitCode = null);
+internal sealed record Progress(string State, string Phase, string? Code, DateTimeOffset? ReadyAt = null, SafeCounts? Counts = null, uint? NativeErrorCode = null, uint? ChildExitCode = null, string? CandidateStatus = null, int? CandidateIssueCount = null);
 internal sealed class Job(Guid id, string owner, string target, string directory)
 {
     internal readonly Guid Id = id;
@@ -125,6 +125,7 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
     {
         if (job.Cancelled) return;
         var path = Path.Combine(job.Directory, "progress.json");
+        Progress? parsedProgress = null;
         try
         {
             if (!File.Exists(path))
@@ -136,26 +137,44 @@ internal sealed class BridgeService(IWorkerLauncher launcher, string? testRoot =
             if (new FileInfo(path).Length > 8192) throw new ApiFault(409, "progress_invalid");
             var progress = JsonSerializer.Deserialize<Progress>(File.ReadAllBytes(path), Program.Json) ?? throw new ApiFault(409, "progress_invalid");
             if (progress.State is not ("starting" or "capturing" or "received" or "timed_out" or "stopped" or "error") || !CaptureWorker.SafePhase(progress.Phase) || !CaptureWorker.SafeCode(progress.Code) || !CaptureFailureDetails.Valid(progress)) throw new ApiFault(409, "progress_invalid");
-            if (progress.State == "received") Snapshot.Read(Path.Combine(job.Directory, "asset-snapshot.json"));
+            parsedProgress = progress;
+            if (progress.State == "received")
+            {
+                var candidate = Snapshot.Read(Path.Combine(job.Directory, "asset-snapshot.json"));
+                progress = progress with { CandidateStatus = candidate.CandidateStatus, CandidateIssueCount = candidate.CandidateIssueCount };
+            }
             job.Progress = progress;
             // A worker must never leave the browser looking active indefinitely after disappearing.
             if (progress.ReadyAt is not null && progress.State == "capturing" && DateTimeOffset.UtcNow > progress.ReadyAt.Value.AddSeconds(195))
             { Cancel(job); job.Progress = new("error", "capture", "worker_completion_timeout"); }
         }
         catch (IOException) { /* Atomic replacement/read contention: retain last safe status. */ }
-        catch (ApiFault e) { job.Progress = new("error", "validation", e.Code); }
-        catch { job.Progress = new("error", "validation", "progress_invalid"); }
+        catch (ApiFault e)
+        {
+            job.Progress = parsedProgress is { } received
+                ? new("error", "validation", e.Code, received.ReadyAt, NativeErrorCode: received.NativeErrorCode, ChildExitCode: received.ChildExitCode, CandidateStatus: e.CandidateStatus, CandidateIssueCount: e.CandidateIssueCount)
+                : new("error", "validation", e.Code);
+        }
+        catch
+        {
+            job.Progress = parsedProgress is { } received
+                ? new("error", "validation", "progress_invalid", received.ReadyAt, NativeErrorCode: received.NativeErrorCode, ChildExitCode: received.ChildExitCode)
+                : new("error", "validation", "progress_invalid");
+        }
     }
     private static object Status(Job job)
     {
         var ready = job.Progress.ReadyAt;
-        return new { jobId = job.Id, targetAccountId = job.Target, state = job.Progress.State, phase = job.Progress.Phase, code = job.Progress.Code, startedAt = job.StartedAt, readyAt = ready, deadline = ready?.AddSeconds(180), remainingSeconds = ready is null ? (int?)null : Math.Max(0, (int)Math.Ceiling((ready.Value.AddSeconds(180) - DateTimeOffset.UtcNow).TotalSeconds)), counts = job.Progress.Counts ?? new SafeCounts(), diagnostics = job.Progress.NativeErrorCode is null && job.Progress.ChildExitCode is null ? null : new CaptureDiagnostics(job.Progress.NativeErrorCode, job.Progress.ChildExitCode), candidateAvailable = !job.Cancelled && job.Progress.State == "received" };
+        var diagnostics = job.Progress.NativeErrorCode is null && job.Progress.ChildExitCode is null && job.Progress.CandidateStatus is null && job.Progress.CandidateIssueCount is null
+            ? null
+            : new CaptureDiagnostics(job.Progress.NativeErrorCode, job.Progress.ChildExitCode, job.Progress.CandidateStatus, job.Progress.CandidateIssueCount);
+        return new { jobId = job.Id, targetAccountId = job.Target, state = job.Progress.State, phase = job.Progress.Phase, code = job.Progress.Code, startedAt = job.StartedAt, readyAt = ready, deadline = ready?.AddSeconds(180), remainingSeconds = ready is null ? (int?)null : Math.Max(0, (int)Math.Ceiling((ready.Value.AddSeconds(180) - DateTimeOffset.UtcNow).TotalSeconds)), counts = job.Progress.Counts ?? new SafeCounts(), diagnostics, candidateAvailable = !job.Cancelled && job.Progress.State == "received" };
     }
     private static void Cancel(Job job)
     {
         if (job.Progress.State is not ("starting" or "capturing")) return;
         try { Security.WriteNew(Path.Combine(job.Directory, "cancel"), new { stop = true }); } catch (IOException) { }
-        job.Cancelled = true; job.Progress = new("stopped", "cancel", "cancelled", job.Progress.ReadyAt, job.Progress.Counts);
+        job.Cancelled = true; job.Progress = new("stopped", "cancel", "cancelled", job.Progress.ReadyAt, job.Progress.Counts, CandidateStatus: "cancelled");
     }
     internal void StopOwnedJobs() { lock (gate) { foreach (var job in jobs.Values) Cancel(job); tokens.Clear(); } }
 }

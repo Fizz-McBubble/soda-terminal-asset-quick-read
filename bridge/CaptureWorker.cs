@@ -26,14 +26,14 @@ internal static class CaptureWorker
     internal static Progress Finish(int exitCode, Progress prior, string output, bool cancelled)
     {
         var childExitCode = unchecked((uint)exitCode);
-        if (cancelled) return new("stopped", "cancel", "cancelled", prior.ReadyAt, ChildExitCode: childExitCode);
+        if (cancelled) return new("stopped", "cancel", "cancelled", prior.ReadyAt, ChildExitCode: childExitCode, CandidateStatus: "cancelled");
         if (prior.State == "error") return prior with { ChildExitCode = childExitCode };
         if (exitCode is 0 or 2 && File.Exists(output))
         {
             try
             {
                 var candidate = Snapshot.Read(output);
-                return new("received", "complete", candidate.Document.GetProperty("response_status_semantics_verified").GetBoolean() ? "staged_for_field_review" : "response_semantics_unverified", prior.ReadyAt, candidate.Counts, ChildExitCode: childExitCode);
+                return new("received", "complete", candidate.Document.GetProperty("response_status_semantics_verified").GetBoolean() ? "staged_for_field_review" : "response_semantics_unverified", prior.ReadyAt, candidate.Counts, ChildExitCode: childExitCode, CandidateStatus: candidate.CandidateStatus, CandidateIssueCount: candidate.CandidateIssueCount);
             }
             catch (ApiFault error)
             {
@@ -42,10 +42,11 @@ internal static class CaptureWorker
                     Security.RejectLinks(output);
                     if (new FileInfo(output).Length > Snapshot.MaxBytes) throw new ApiFault(409, "candidate_size_invalid");
                     using var json = JsonDocument.Parse(File.ReadAllBytes(output));
-                    if (json.RootElement.TryGetProperty("stop_reason", out var reason) && reason.GetString() == "timed_out") return new("timed_out", "capture", "timed_out", prior.ReadyAt, ChildExitCode: childExitCode);
+                    var evidence = CandidateEvidenceRules.FromDocument(json.RootElement);
+                    if (json.RootElement.TryGetProperty("stop_reason", out var reason) && reason.GetString() == "timed_out") return new("timed_out", "capture", "timed_out", prior.ReadyAt, ChildExitCode: childExitCode, CandidateStatus: "timed_out", CandidateIssueCount: evidence.IssueCount);
                 }
                 catch { }
-                return new("error", "validation", error.Code, prior.ReadyAt, ChildExitCode: childExitCode);
+                return new("error", "validation", error.Code, prior.ReadyAt, ChildExitCode: childExitCode, CandidateStatus: error.CandidateStatus, CandidateIssueCount: error.CandidateIssueCount);
             }
         }
         return new("error", prior.Phase, "capture_child_failed", prior.ReadyAt, ChildExitCode: childExitCode);
@@ -110,7 +111,7 @@ internal static class CaptureWorker
             await child.WaitForExitAsync(); await Task.WhenAll(stderr, stdout);
             lock (gate)
             {
-                current = watchdog && !cancelled && current.State != "error" ? new("error", current.ReadyAt is null ? "public_metadata" : "capture", "capture_watchdog_timeout", current.ReadyAt, ChildExitCode: unchecked((uint)child.ExitCode)) : Finish(child.ExitCode, current, output, cancelled);
+                current = watchdog && !cancelled && current.State != "error" ? new("error", current.ReadyAt is null ? "public_metadata" : "capture", "capture_watchdog_timeout", current.ReadyAt, ChildExitCode: unchecked((uint)child.ExitCode), CandidateStatus: "timed_out") : Finish(child.ExitCode, current, output, cancelled);
                 WriteProgress(directory, current);
             }
             return current.State == "error" ? 1 : 0;

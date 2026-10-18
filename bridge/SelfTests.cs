@@ -13,9 +13,9 @@ internal static class SelfTests
     private static void Check(bool value, string name) { if (!value) throw new Exception("test_failed:" + name); checks++; }
     private static async Task Refuses(Func<Task> action, int status, string name)
     { try { await action(); } catch (ApiFault e) { Check(e.Status == status, name); return; } throw new Exception("test_did_not_refuse:" + name); }
-    internal static object Fixture(string status = "response_semantics_unverified", bool all = true, object[]? issues = null) => new
+    internal static object Fixture(string status = "response_semantics_unverified", bool all = true, object[]? issues = null, string stopReason = "load_responses_observed") => new
     {
-        schema = "soda-asset-snapshot-probe/v1", status, stop_reason = "load_responses_observed",
+        schema = "soda-asset-snapshot-probe/v1", status, stop_reason = stopReason,
         source = new { requested_game_region = "CN", game_account_identity = "not_collected_or_verified" },
         coverage = new { disc_load_received = all, engine_load_received = true, agent_load_received = true },
         counts = new { discs = 0, engines = 0, agents = 0 }, assets = new { discs = Array.Empty<object>(), engines = Array.Empty<object>(), agents = Array.Empty<object>() },

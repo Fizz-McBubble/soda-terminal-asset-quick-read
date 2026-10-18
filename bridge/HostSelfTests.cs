@@ -115,7 +115,8 @@ internal static class HostSelfTests
         void Check(bool value, string name) { if (!value) throw new Exception("host_version_identity:" + name); passed++; }
         const string published112Exe = "B57D907F32763FA120BABF8CE9609869B3A1FCC9665D2DD2FCF3DDF6B57BD3BE";
         const string published112Dll = "B9AA35189B489F9F7788FBBB6876E74B7436255951AD8F587864112D4C85E5D6";
-        Check(LaunchIdentity.Version == "1.0.10" && typeof(Program).Assembly.GetName().Version == new Version(1, 0, 10, 0), "current_metadata_matches_wire_version");
+        var expectedComponentVersion = Version.Parse(LaunchIdentity.Version);
+        Check(typeof(Program).Assembly.GetName().Version == new Version(expectedComponentVersion.Major, expectedComponentVersion.Minor, expectedComponentVersion.Build, 0), "current_metadata_matches_wire_version");
         const string published113Exe = "1945B59744A3082927F8A9870FA690E121508DDBB0FBB9B57E416FE4FE82BDFD";
         const string published113Dll = "14716C679EF718F52D43D13FE88F040B61C458FDBDF75068AD1AAFEB9A420728";
         Check(ServiceReadiness.MatchesPublishedInstallation("1.1.3", "1.0.9", published113Exe, published113Dll), "published_113_exact_component_and_wire_identity_accepted");

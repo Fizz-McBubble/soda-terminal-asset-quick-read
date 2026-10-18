@@ -4,7 +4,9 @@ namespace Soda.AssetQuickRead;
 
 internal sealed record CaptureDiagnostics(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] uint? NativeErrorCode = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] uint? ChildExitCode = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] uint? ChildExitCode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CandidateStatus = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? CandidateIssueCount = null);
 
 internal static class CaptureFailureDetails
 {
@@ -47,7 +49,10 @@ internal static class CaptureFailureDetails
         if (!Codes.Contains(raw, StringComparer.Ordinal) || raw is "protocol_file_missing" or "protocol_hash_mismatch" or "driver_file_missing" or "driver_hash_mismatch") return false;
         code = raw; return true;
     }
-    internal static bool Valid(Progress progress) => progress.NativeErrorCode is null || progress.Code is "capture_open_failed" or "capture_receive_failed" or "capture_child_start_failed" or "worker_launch_failed" or "uac_declined";
+    internal static bool Valid(Progress progress) =>
+        (progress.NativeErrorCode is null || progress.Code is "capture_open_failed" or "capture_receive_failed" or "capture_child_start_failed" or "worker_launch_failed" or "uac_declined") &&
+        CandidateEvidenceRules.SafeStatus(progress.CandidateStatus) &&
+        CandidateEvidenceRules.SafeIssueCount(progress.CandidateStatus, progress.CandidateIssueCount);
     internal static Progress ChildStartFailure(System.ComponentModel.Win32Exception error, Progress previous) =>
         new("error", "launch", "capture_child_start_failed", previous.ReadyAt, NativeErrorCode: unchecked((uint)error.NativeErrorCode));
     internal static string Phase(string code, Progress previous) => previous.ReadyAt is not null ? "capture" :
