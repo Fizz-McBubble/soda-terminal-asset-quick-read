@@ -1,7 +1,7 @@
 ; Adapted from the reviewed scanner NSIS 3.13 wrapper; UI precedes the solid payload.
 Unicode true
 SetCompressor /SOLID lzma
-SetCompressorDictSize 128
+SetCompressorDictSize 96
 ReserveFile /plugin System.dll
 Name "Soda Terminal · 资产快读"
 Icon "soda-brand-icon.ico"

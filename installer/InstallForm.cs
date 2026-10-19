@@ -121,7 +121,7 @@ internal sealed partial class InstallForm
         }
         catch (Exception error)
         {
-            var code = AssetUninstall.FailureCode(error); diagnostics.Record("uninstall", code);
+            var code = AssetUninstall.FailureCode(error); diagnostics.Record("uninstall", code); diagnostics.CaptureFailure(error);
             ShowUninstallError(code, diagnostics);
         }
         finally { progress.Indeterminate = false; running.Dispose(); running = null; action.Enabled = cancel.Enabled = uninstall.Enabled = true; }

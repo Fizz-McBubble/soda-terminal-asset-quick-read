@@ -11,6 +11,37 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
     private readonly List<object> events = new();
     private readonly List<InstallerAttemptReport> inMemoryAttempts = new();
     private string currentPhase = "prepare";
+    private string currentOperation = "prepare";
+    private InstallerFailureEvidence? failureEvidence;
+    internal void SetOperation(string operation)
+    { if (InstallerFeedback.FailureOperations.Contains(operation)) lock (gate) currentOperation = operation; }
+    internal static void AtOperation(string operation, Action action)
+    {
+        try { action(); }
+        catch (Exception error)
+        { if (!error.Data.Contains("SodaOperation")) error.Data["SodaOperation"] = operation; throw; }
+    }
+    internal static UnauthorizedAccessException ReadOnlyFailure()
+    { var error = new UnauthorizedAccessException("uninstaller_access_denied"); error.Data["SodaFailureKind"] = "read_only"; return error; }
+    internal void CaptureFailure(Exception error)
+    {
+        int? native = null;
+        string? operation = null, explicitKind = null;
+        Exception cause = error;
+        for (var depth = 0; depth < 8 && cause is not null; depth++)
+        {
+            if (cause.Data["SodaOperation"] is string op && InstallerFeedback.FailureOperations.Contains(op)) operation ??= op;
+            if (cause.Data["SodaFailureKind"] is string kind && InstallerFeedback.FailureKinds.Contains(kind)) explicitKind ??= kind;
+            if (native is null && cause is System.ComponentModel.Win32Exception win32 && win32.NativeErrorCode is >= 0 and <= 65535) native = win32.NativeErrorCode;
+            if (native is null && ((uint)cause.HResult & 0xffff0000u) == 0x80070000u) native = cause.HResult & 0xffff;
+            if (cause.InnerException is null) break;
+            cause = cause.InnerException;
+        }
+        var failureKind = explicitKind ?? (native is 32 or 33 ? "sharing_violation" : native == 5 || cause is UnauthorizedAccessException ? "access_denied"
+            : cause is InvalidDataException ? "invalid_data" : cause is FileNotFoundException or DirectoryNotFoundException ? "file_missing"
+            : cause is PathTooLongException ? "path_too_long" : cause is OperationCanceledException ? "cancelled" : cause is IOException ? "io_error" : "other");
+        lock (gate) failureEvidence = new InstallerFailureEvidence(operation ?? currentOperation, failureKind, native);
+    }
     private static readonly Lazy<string?> ExecutableHash = new(() =>
     {
         try { return Environment.ProcessPath is { } path ? InstallEngine.Digest(path) : null; }
@@ -86,7 +117,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
         phaseChanged?.Invoke(phase);
         lock (gate)
         {
-            if (phase is not ("failed" or "cancelled" or "complete")) currentPhase = phase;
+            if (phase is not ("failed" or "cancelled" or "complete")) { currentPhase = phase; currentOperation = phase; failureEvidence = null; }
             if (phase == "protocol" && item is >= 0 and <= 2 && source is "github_raw" or "github_contents" or "verified_local" or "github_archive" && InstallerFeedback.WhitelistedAttemptCodes.Contains(code))
             {
                 if (inMemoryAttempts.Count == 16) inMemoryAttempts.RemoveAt(0);
@@ -104,7 +135,7 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
                 currentPhase,
                 finalCode,
                 clock.ElapsedMilliseconds,
-                inMemoryAttempts
+                inMemoryAttempts, failureEvidence
             );
         }
     }

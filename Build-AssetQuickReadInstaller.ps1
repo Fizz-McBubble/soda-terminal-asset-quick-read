@@ -38,7 +38,7 @@ if ($ReusePublishedPayloadDirectory) {
     # Reuse immutable reviewed payload bytes; only the installer changes.
     $oldCatalogPath=Join-Path $ReusePublishedPayloadDirectory 'catalog.json'
     $oldCatalog=Get-Content -LiteralPath $oldCatalogPath -Raw | ConvertFrom-Json
-    if ($oldCatalog.version -cnotin @('1.0.3','1.0.8','1.1.4')) { throw 'Published payload version unsupported.' }
+    if ($oldCatalog.version -cnotin @('1.0.3','1.0.8','1.1.4','1.1.7')) { throw 'Published payload version unsupported.' }
     $publishedCatalog=Join-Path $PSScriptRoot ('installer/published-'+$oldCatalog.version+'-catalog.json')
     # Git may store LF while a Windows build emitted CRLF. Permit only that
     # representation change; every catalog field and the archive SHA remain pinned.
@@ -48,7 +48,7 @@ if ($ReusePublishedPayloadDirectory) {
     $archive=Join-Path $ReusePublishedPayloadDirectory 'setup/payload/asset-quick-read.zip'
     if((Get-FileHash -LiteralPath $archive).Hash -cne $oldCatalog.archiveSha256){throw 'Published payload archive mismatch.'}
     $catalogFiles=$oldCatalog.files
-    $packagedBridgeVersion=switch ($oldCatalog.version) { '1.1.4' {'1.0.10'} '1.0.8' {'1.0.4'} default {'1.0.3'} } # Identity is locked by the complete published catalog.
+    $packagedBridgeVersion=switch ($oldCatalog.version) { '1.1.7' {'1.0.11'} '1.1.4' {'1.0.10'} '1.0.8' {'1.0.4'} default {'1.0.3'} } # Identity is locked by the complete published catalog.
     # NSIS reads the existing immutable archive directly; no runtime copy is made.
     if(-not $NsisPath){throw 'Published payload reuse requires the pinned NSIS wrapper.'}
     $payloadDirectory=Join-Path $output 'setup/payload'; [IO.Directory]::CreateDirectory($payloadDirectory) | Out-Null

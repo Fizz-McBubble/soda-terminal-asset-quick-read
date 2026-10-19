@@ -107,9 +107,11 @@ internal sealed partial class InstallForm : Form
             {
                 var payload = Path.Combine(AppContext.BaseDirectory, "payload");
                 text.Text = "正在准备组件…";
+                diagnostics.SetOperation("payload_path");
                 using var embedded = typeof(InstallEngine).Assembly.GetManifestResourceStream("payload.zip");
                 if (embedded is not null)
                 {
+                    diagnostics.SetOperation("payload_extract");
                     temporary = Path.Combine(Path.GetTempPath(), "SodaAssetQuickRead-" + Guid.NewGuid().ToString("N"));
                     InstallEngine.NoLinks(temporary); Directory.CreateDirectory(temporary); payload = temporary;
                     using var output = new FileStream(Path.Combine(payload, "asset-quick-read.zip"), FileMode.CreateNew, FileAccess.Write);
@@ -117,7 +119,7 @@ internal sealed partial class InstallForm : Form
                 }
                 else
                     for (var attempt = 0; !File.Exists(Path.Combine(payload, "ready")); attempt++)
-                    { token.ThrowIfCancellationRequested(); if (File.Exists(Path.Combine(payload, "failed")) || attempt >= 600) throw new IOException("offline_payload_unavailable"); await Task.Delay(200, token); }
+                    { diagnostics.SetOperation("payload_wait"); token.ThrowIfCancellationRequested(); if (File.Exists(Path.Combine(payload, "failed")) || attempt >= 600) throw new IOException("offline_payload_unavailable"); await Task.Delay(200, token); }
                 installed = await Task.Run(() => InstallEngine.Install(Path.Combine(payload, "asset-quick-read.zip"), InstallEngine.ReadCatalog(), InstallEngine.DefaultRoot, new InstallRegistration(InstallEngine.DefaultRoot, diagnostics), token, ((IProgress<int>)reporter).Report, diagnostics: diagnostics), token);
             }
             finally { operation.ReleaseMutex(); }
@@ -128,7 +130,7 @@ internal sealed partial class InstallForm : Form
             await StartInstalledService();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { diagnostics.Record("cancelled", "installer_cancelled"); text.Text = "安装已取消，可以重新安装。"; UpdateDetails("本次新建安装文件已回滚，已有版本和读取结果保留。"); progress.Visible = false; action.Text = "重新安装"; feedback.Visible = false; lastFeedbackReport = null; lastFeedbackUrl = null; }
-        catch (Exception error) { var code = InstallerDiagnostics.Code(error); diagnostics.Record("failed", code); ShowInstallError(code, diagnostics); }
+        catch (Exception error) { var code = InstallerDiagnostics.Code(error); diagnostics.CaptureFailure(error); diagnostics.Record("failed", code); ShowInstallError(code, diagnostics); }
         finally
         {
             if (temporary is not null && Directory.Exists(temporary))
@@ -259,6 +261,7 @@ internal sealed partial class InstallForm : Form
             var code = InstallerDiagnostics.Code(error);
             var diagnostics = activeDiagnostics ??= new InstallerDiagnostics(Path.Combine(testOperations?.Root ?? InstallEngine.DefaultRoot, "installer-diagnostics"));
             diagnostics.Record("service_start", code);
+            diagnostics.CaptureFailure(error);
             ShowServiceStartError(code, diagnostics);
         }
         finally

@@ -15,6 +15,12 @@ internal sealed record InstallerAttemptReport(
     [property: JsonPropertyName("elapsedMs")] long ElapsedMs
 );
 
+internal sealed record InstallerFailureEvidence(
+    [property: JsonPropertyName("operation")] string Operation,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("nativeErrorCode"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NativeErrorCode = null
+);
+
 internal sealed record InstallerFeedbackReport(
     [property: JsonPropertyName("schema")] int Schema,
     [property: JsonPropertyName("tool")] string Tool,
@@ -23,11 +29,16 @@ internal sealed record InstallerFeedbackReport(
     [property: JsonPropertyName("stage")] string Stage,
     [property: JsonPropertyName("code")] string Code,
     [property: JsonPropertyName("durationMs")] long DurationMs,
-    [property: JsonPropertyName("attempts")] InstallerAttemptReport[] Attempts
+    [property: JsonPropertyName("attempts")] InstallerAttemptReport[] Attempts,
+    [property: JsonPropertyName("failure"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] InstallerFailureEvidence? Failure = null
 );
 
 internal static class InstallerFeedback
 {
+    internal static readonly HashSet<string> FailureKinds = new(StringComparer.Ordinal)
+    { "access_denied", "read_only", "sharing_violation", "invalid_data", "file_missing", "path_too_long", "io_error", "cancelled", "other" };
+    internal static readonly HashSet<string> FailureOperations = new(StringComparer.Ordinal)
+    { "prepare", "payload_path", "payload_extract", "payload_wait", "payload_verify", "copy", "protocol", "verify", "register", "service_start", "uninstall", "delete_preflight", "delete_files", "delete_uninstaller", "remove_protocol", "remove_registration", "remove_directories" };
     internal const string FeedbackHost = "https://sodaterminal.com/installer-feedback#";
 
     internal static readonly HashSet<string> WhitelistedStages = new(StringComparer.Ordinal)
@@ -133,7 +144,7 @@ internal static class InstallerFeedback
         string stage,
         string code,
         long durationMs,
-        IEnumerable<InstallerAttemptReport> attempts)
+        IEnumerable<InstallerAttemptReport> attempts, InstallerFailureEvidence? failure = null)
     {
         var safeStage = WhitelistedStages.Contains(stage) ? stage : "failed";
         var safeCode = ClassifyCode(code);
@@ -154,7 +165,9 @@ internal static class InstallerFeedback
             safeStage,
             safeCode,
             safeDuration,
-            boundedAttempts
+            boundedAttempts,
+            failure is not null && FailureOperations.Contains(failure.Operation) && FailureKinds.Contains(failure.Kind)
+                && failure.NativeErrorCode is null or >= 0 and <= 65535 ? failure : null
         );
     }
 

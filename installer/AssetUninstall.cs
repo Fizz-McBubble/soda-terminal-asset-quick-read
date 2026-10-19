@@ -60,7 +60,9 @@ internal static class AssetUninstall
         catch (Exception error)
         {
             var code = FailureCode(error);
-            new InstallerDiagnostics(Path.Combine(root, "installer-diagnostics")).Record("uninstall", code);
+            var diagnostics = new InstallerDiagnostics(Path.Combine(root, "installer-diagnostics"));
+            diagnostics.Record("uninstall", code);
+            diagnostics.CaptureFailure(error);
             MessageBox.Show(InstallerDiagnostics.UninstallMessage(code) + "\n" + InstallerDiagnostics.UninstallRecovery(code) + "\n诊断代码：" + code,
                 "卸载未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1;
         }
@@ -110,6 +112,7 @@ internal static class AssetUninstall
         "1.1.4" => Published114Catalog(),
         "1.1.5" => Published115Catalog(),
         "1.1.6" => Published116Catalog(),
+        "1.1.7" => Published117Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
@@ -152,6 +155,12 @@ internal static class AssetUninstall
     private static Catalog Published116Catalog()
     {
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.6-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+
+    private static Catalog Published117Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.7-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 
@@ -232,27 +241,27 @@ internal static class AssetUninstall
             {
                 AssertRegistrationUnchanged();
                 InstallEngine.NoLinks(file.Path);
-                if (Matches(file)) File.Delete(file.Path);
+                if (Matches(file)) InstallerDiagnostics.AtOperation("delete_files", () => File.Delete(file.Path));
             }
             AssertUnchanged();
             protocolRemovalStarted = true;
             foreach (var candidate in catalogs)
-                protocol.RemoveMatching(Path.Combine(root, "versions", candidate.Version, "Soda.AssetQuickRead.Bridge.exe"));
+                InstallerDiagnostics.AtOperation("remove_protocol", () => protocol.RemoveMatching(Path.Combine(root, "versions", candidate.Version, "Soda.AssetQuickRead.Bridge.exe")));
             protocol.AssertRemovalUnchanged(null);
             AssertUnchanged();
-            if (record is not null && !store.Remove(record)) throw new IOException("uninstall_registration_changed");
+            InstallerDiagnostics.AtOperation("remove_registration", () => { if (record is not null && !store.Remove(record)) throw new IOException("uninstall_registration_changed"); });
             if (store.Read() is not null) throw new IOException("uninstall_registration_changed");
             stubGuard?.Dispose();
             if (observedStubHash is not null)
             {
                 InstallEngine.NoLinks(uninstall);
                 if (!File.Exists(uninstall) || digest(uninstall) != observedStubHash) throw new IOException("uninstaller_file_changed");
-                File.Delete(uninstall);
+                InstallerDiagnostics.AtOperation("delete_uninstaller", () => File.Delete(uninstall));
             }
             var directories = files.SelectMany(file => Parents(file.Path, root))
                 .Append(root).Distinct().OrderByDescending(path => path.Length);
             foreach (var path in directories)
-            { InstallEngine.NoLinks(path); if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path); }
+            { InstallEngine.NoLinks(path); if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any()) InstallerDiagnostics.AtOperation("remove_directories", () => Directory.Delete(path)); }
             void AssertUnchanged()
             {
                 AssertRegistrationUnchanged();
@@ -268,13 +277,16 @@ internal static class AssetUninstall
     }
     private static FileStream OpenDeletionGuard(string path)
     {
-        InstallEngine.NoLinks(path);
-        if ((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0)
-            throw new UnauthorizedAccessException("uninstaller_access_denied");
-        // Probe the operation we will perform. GENERIC_WRITE incorrectly rejects
-        // delete-shared readers and resident WinDivert images that permit DELETE.
-        // The existing retention guard denies writes/rename without mutating files.
-        return VersionRetention.OpenDeletionGuard(path);
+        FileStream? handle = null;
+        InstallerDiagnostics.AtOperation("delete_preflight", () =>
+        {
+            InstallEngine.NoLinks(path);
+            if ((File.GetAttributes(path) & FileAttributes.ReadOnly) != 0)
+                throw InstallerDiagnostics.ReadOnlyFailure();
+            // Probe DELETE without changing attributes or weakening sharing protection.
+            handle = VersionRetention.OpenDeletionGuard(path);
+        });
+        return handle!;
     }
     private static bool IsSharedDriverFile(string catalogPath) =>
         catalogPath.Equals("runtime/WinDivert64.sys", StringComparison.OrdinalIgnoreCase);

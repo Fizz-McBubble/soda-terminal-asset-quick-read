@@ -15,6 +15,20 @@ internal static class InstallerFeedbackTests
             passed++;
         }
 
+        var failureDiag = new InstallerDiagnostics(evidencePath + ".failure-fixture");
+        failureDiag.Record("uninstall");
+        try { InstallerDiagnostics.AtOperation("delete_preflight", () => throw InstallerDiagnostics.ReadOnlyFailure()); }
+        catch (Exception error) { failureDiag.CaptureFailure(error); }
+        var boundedFailure = failureDiag.BuildSafeReport("installer_access_denied");
+        Check(boundedFailure.Failure is { Operation: "delete_preflight", Kind: "read_only", NativeErrorCode: 5 }, "read_only_failure_keeps_safe_operation_and_code");
+        var failureJson = InstallerFeedback.SerializeReport(boundedFailure);
+        File.WriteAllText(evidencePath + ".failure-report.json", failureJson);
+        Check(!failureJson.Contains(evidencePath) && failureJson.Contains("read_only"), "failure_projection_excludes_path");
+        failureDiag.Record("prepare"); failureDiag.SetOperation("payload_extract");
+        failureDiag.CaptureFailure(new System.ComponentModel.Win32Exception(32, @"C:\private\blocked.dll"));
+        Check(failureDiag.BuildSafeReport("installer_local_operation_failed").Failure is { Operation: "payload_extract", Kind: "sharing_violation", NativeErrorCode: 32 }, "win32_sharing_violation_is_not_generic");
+        failureDiag.Record("prepare");
+        Check(failureDiag.BuildSafeReport("installer_local_operation_failed").Failure is null, "retry_drops_stale_failure");
         // Test 1: Whitelist classification and raw error mapping
         Check(InstallerFeedback.ClassifyCode("protocol_download_timeout") == "protocol_download_timeout", "valid_code_preserved");
         Check(InstallerFeedback.ClassifyCode("installer_access_denied") == "installer_access_denied", "access_denied_preserved");
