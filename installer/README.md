@@ -1,6 +1,6 @@
 # Independent Asset Quick Read installer
 
-Current release preparation: setup 1.1.9 includes Bridge 1.0.12 and the rebuilt probe. Client dispatch version and seed-format causes remain distinct; repair errors preserve the actual switch operation. Published 1.1.8 identities remain recognized. It adds bounded installer failure operation/kind/native error diagnostics and recognizes the published 1.1.7 catalog and uninstaller for upgrade/removal. NSIS uses a 96 MB LZMA dictionary to avoid compiler allocation failures. Existing permission, rollback, driver and user-data protection remains. Historical implementation notes follow.
+Current release preparation: setup 1.2.0 includes Bridge 1.1.0 and the rebuilt probe. Client dispatch version and seed-format causes remain distinct; repair errors preserve the actual switch operation. Published 1.1.9 / Bridge 1.0.12 identities remain recognized; historical releases are not renamed or replaced. It adds bounded installer failure operation/kind/native error diagnostics and recognizes the published 1.1.7 catalog and uninstaller for upgrade/removal. NSIS uses a 96 MB LZMA dictionary to avoid compiler allocation failures. Existing permission, rollback, driver and user-data protection remains. Historical implementation notes follow.
 
 
 
