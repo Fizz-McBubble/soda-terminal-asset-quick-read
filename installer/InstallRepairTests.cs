@@ -115,6 +115,31 @@ internal static class InstallRepairTests
             Check(Same(before, Snapshot(install)) && registration.Applied == 0 && registration.Value == "original", "locked_original_and_registration_preserved");
         }
         {
+            var install = Prepare("locked-child"); var final = Final(install); Damage(final);
+            var before = Snapshot(install); var registration = new Registration();
+            var diagnostics = new InstallerDiagnostics(Path.Combine(root, "locked-child-diagnostics"));
+            using (var guard = new FileStream(Path.Combine(final, "unknown", "keep.txt"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                try
+                {
+                    InstallEngine.Install(archive, catalog, install, registration, CancellationToken.None, _ => { }, diagnostics: diagnostics);
+                    throw new Exception("repair_locked_child_not_refused");
+                }
+                catch (IOException error)
+                {
+                    Check(error.Message == "installed_repair_switch_unavailable", "child_handle_access_denied_is_not_assumed_acl_or_sharing_hresult");
+                    diagnostics.CaptureFailure(error);
+                    var report = diagnostics.BuildSafeReport(error.Message);
+                    Check(report.Failure is { Operation: "repair_switch", Kind: "access_denied", NativeErrorCode: 5 }, "child_handle_keeps_actual_operation_and_native_code");
+                    Check(InstallerDiagnostics.Message(error.Message, report.Failure).Contains("文件占用"), "child_handle_guidance_does_not_assume_acl_failure");
+                    File.WriteAllText(Path.Combine(root, "repair-switch-feedback.json"), InstallerFeedback.SerializeReport(report));
+                }
+                Check(Same(before, Snapshot(install)) && registration.Applied == 0, "child_handle_failure_preserves_original_and_registration");
+            }
+            InstallEngine.Install(archive, catalog, install, registration, CancellationToken.None, _ => { });
+            Check(Backups(install).Length == 1 && File.ReadAllText(Path.Combine(Backups(install)[0], "unknown", "keep.txt")) == "USER CONTENT", "child_handle_release_allows_repair_and_preserves_original");
+        }
+        {
             var install = Prepare("junction"); var final = Final(install); var outside = Path.Combine(root, "junction-target"); Directory.CreateDirectory(outside);
             File.WriteAllText(Path.Combine(outside, "keep.txt"), "OUTSIDE"); var junction = Path.Combine(final, "linked");
             var start = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true };

@@ -23,6 +23,7 @@ internal static class CaptureFailureDetails
         "public_metadata_json_invalid", "public_metadata_return_code_type_invalid", "public_metadata_return_code_rejected", "public_metadata_ec2b_missing", "public_metadata_ec2b_decode_failed",
         "client_resource_input_rejected", "client_resource_unavailable", "client_resource_type_or_size_rejected", "client_resource_read_failed",
         "client_dispatch_fields_missing_or_ambiguous", "client_dispatch_version_or_seed_shape_rejected", "client_dispatch_same_object_unverified",
+        "client_dispatch_version_rejected", "client_dispatch_seed_shape_rejected", "client_dispatch_version_and_seed_shape_rejected",
         "capture_dll_unavailable", "capture_open_failed", "capture_receive_failed", "dll_search_restriction_failed", "cancel_handler_unavailable", "live_capture_requires_windows",
         "report_serialization_failed", "output_create_failed_or_already_exists", "output_write_failed"
     ];

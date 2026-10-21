@@ -98,7 +98,7 @@ internal static class ServiceReadiness
         "1.1.2" => "1.0.8",
         "1.1.3" => "1.0.9",
         "1.1.4" or "1.1.5" or "1.1.6" => "1.0.10",
-        "1.1.7" => "1.0.11",
+        "1.1.7" or "1.1.8" => "1.0.11",
         _ => null
     };
     // The published 1.1.0 package contains component 1.0.6 bytes, but its

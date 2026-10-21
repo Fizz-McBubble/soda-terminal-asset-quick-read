@@ -113,6 +113,7 @@ internal static class AssetUninstall
         "1.1.5" => Published115Catalog(),
         "1.1.6" => Published116Catalog(),
         "1.1.7" => Published117Catalog(),
+        "1.1.8" => Published118Catalog(),
         _ => throw new IOException("uninstaller_version_unsupported")
     };
 
@@ -161,6 +162,12 @@ internal static class AssetUninstall
     private static Catalog Published117Catalog()
     {
         using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.7-catalog.json")!;
+        return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+
+    private static Catalog Published118Catalog()
+    {
+        using var stream = typeof(AssetUninstall).Assembly.GetManifestResourceStream("published-1.1.8-catalog.json")!;
         return System.Text.Json.JsonSerializer.Deserialize<Catalog>(stream, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
     }
 

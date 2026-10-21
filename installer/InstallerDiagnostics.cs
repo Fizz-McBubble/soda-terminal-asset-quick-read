@@ -58,7 +58,9 @@ internal sealed class InstallerDiagnostics(string directory, Action<string>? pha
             new[] { "protocol_download_", "protocol_source_", "payload_", "catalog_", "installed_", "offline_payload_", "uninstaller_", "protocol_registration_", "uninstall_registration_", "start_menu_", "linked_path_", "another_installer_", "local_service_" }.Any(prefix => value.StartsWith(prefix, StringComparison.Ordinal))) return value;
         return "installer_local_operation_failed";
     }
-    internal static string Message(string code) => code == "another_installer_is_running" ? "已有安装正在进行，请稍后重试。"
+    internal static string Message(string code, InstallerFailureEvidence? failure = null) =>
+        failure is { Operation: "repair_switch", NativeErrorCode: 5 } ? "系统未允许切换现有版本目录，文件占用也可能导致此错误。"
+        : code == "another_installer_is_running" ? "已有安装正在进行，请稍后重试。"
         : code == "installed_repair_files_in_use" ? "现有程序文件暂不可切换，请查看详情后重试。"
         : code == "installed_repair_switch_unavailable" ? "现有版本暂不可切换，原因未明，请查看详情。"
         : code == "installed_repair_restore_conflict" ? "修复回滚遇到目录变化，原目录备份已保留。"

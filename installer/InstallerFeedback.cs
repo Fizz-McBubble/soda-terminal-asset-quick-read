@@ -38,7 +38,7 @@ internal static class InstallerFeedback
     internal static readonly HashSet<string> FailureKinds = new(StringComparer.Ordinal)
     { "access_denied", "read_only", "sharing_violation", "invalid_data", "file_missing", "path_too_long", "io_error", "cancelled", "other" };
     internal static readonly HashSet<string> FailureOperations = new(StringComparer.Ordinal)
-    { "prepare", "payload_path", "payload_extract", "payload_wait", "payload_verify", "copy", "protocol", "verify", "register", "service_start", "uninstall", "delete_preflight", "delete_files", "delete_uninstaller", "remove_protocol", "remove_registration", "remove_directories" };
+    { "prepare", "payload_path", "payload_extract", "payload_wait", "payload_verify", "copy", "protocol", "verify", "repair_switch", "register", "service_start", "uninstall", "delete_preflight", "delete_files", "delete_uninstaller", "remove_protocol", "remove_registration", "remove_directories" };
     internal const string FeedbackHost = "https://sodaterminal.com/installer-feedback#";
 
     internal static readonly HashSet<string> WhitelistedStages = new(StringComparer.Ordinal)

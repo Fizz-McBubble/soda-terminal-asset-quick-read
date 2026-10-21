@@ -197,7 +197,11 @@ fn inspect_bytes(bytes: &[u8]) -> Inspection {
         receipt.seed_is_16_hex =
             fields.seed.len() == 16 && fields.seed.bytes().all(|byte| byte.is_ascii_hexdigit());
         if !receipt.expected_cn_version_matches || !receipt.seed_is_16_hex {
-            receipt.status = "client_dispatch_version_or_seed_shape_rejected";
+            receipt.status = match (receipt.expected_cn_version_matches, receipt.seed_is_16_hex) {
+                (false, true) => "client_dispatch_version_rejected",
+                (true, false) => "client_dispatch_seed_shape_rejected",
+                _ => "client_dispatch_version_and_seed_shape_rejected",
+            };
             return Inspection {
                 receipt,
                 seed: None,
@@ -252,18 +256,36 @@ mod tests {
 
     #[test]
     fn wrong_version_and_unbounded_or_nonhex_seed_are_rejected() {
-        for (version, seed) in [
-            ("OSPRODWin3.2.0", "0123456789abcdef"),
-            ("CNPRODWin3.1.0", "0123456789abcdef"),
-            (EXPECTED_VERSION, "0123456789abcdeg"),
-            (EXPECTED_VERSION, "0123"),
+        for (version, seed, expected) in [
+            (
+                "OSPRODWin3.2.0",
+                "0123456789abcdef",
+                "client_dispatch_version_rejected",
+            ),
+            (
+                "CNPRODWin3.1.0",
+                "0123456789abcdef",
+                "client_dispatch_version_rejected",
+            ),
+            (
+                EXPECTED_VERSION,
+                "0123456789abcdeg",
+                "client_dispatch_seed_shape_rejected",
+            ),
+            (
+                EXPECTED_VERSION,
+                "0123",
+                "client_dispatch_seed_shape_rejected",
+            ),
+            (
+                "OSPRODWin3.2.0",
+                "0123",
+                "client_dispatch_version_and_seed_shape_rejected",
+            ),
         ] {
             let inspected = inspect_bytes(&fixture(version, seed));
             assert!(inspected.seed.is_none());
-            assert_eq!(
-                inspected.receipt.status,
-                "client_dispatch_version_or_seed_shape_rejected"
-            );
+            assert_eq!(inspected.receipt.status, expected);
         }
     }
 

@@ -11,7 +11,7 @@ internal static class Security
     internal static bool ValidOrigin(string? origin) => origin is not null && Origins.Contains(origin, StringComparer.Ordinal);
     internal static readonly Dictionary<string, string> Pinned = new(StringComparer.Ordinal)
     {
-        ["soda-asset-capture.exe"] = "F59C95A666C744703696F9BA083B601B0B2EDC92FBCD52935BFE79FFBED3EC78",
+        ["soda-asset-capture.exe"] = "454637CE68A114C4785F1FAF8A319B926CCB4339F10F11A85CE9B8CCD0BF7DFB",
         ["WinDivert.dll"] = "C1E060EE19444A259B2162F8AF0F3FE8C4428A1C6F694DCE20DE194AC8D7D9A2",
         ["WinDivert64.sys"] = "8DA085332782708D8767BCACE5327A6EC7283C17CFB85E40B03CD2323A90DDC2",
         ["assets/manifest.json"] = "38006E92317CF8EBA3E578D58E5B0FC9AECFEC117D20DC375AA9BED2B073302E",

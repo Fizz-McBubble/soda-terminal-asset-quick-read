@@ -56,7 +56,7 @@ $localFields = $safeFieldText | ConvertFrom-Json
 if ($localFields.requestSeedSaved -or $localFields.rawFileSaved -or $localFields.liveCaptureStarted -or $localFields.unselectedFieldsExported) { throw 'Local inspection enabled a forbidden output.' }
 [IO.File]::WriteAllText($resources, '{"DispatchSeed":"0123456789ABCDEF","DispatchVersion":"OSPRODWin3.2.0"}')
 $wrongClientReceipt = Join-Path $testDirectory 'wrong-client-version.json'
-Invoke-Probe 'wrong_client_version_stops_before_queries' @('check-cn-config', '--client-resources', $resources, '--out', $wrongClientReceipt) 1 'client_dispatch_version_or_seed_shape_rejected'
+Invoke-Probe 'wrong_client_version_stops_before_queries' @('check-cn-config', '--client-resources', $resources, '--out', $wrongClientReceipt) 1 'client_dispatch_version_rejected'
 $wrongClient = Get-Content -LiteralPath $wrongClientReceipt -Raw | ConvertFrom-Json
 if ($wrongClient.public_metadata.requests_attempted -ne 0) { throw 'Wrong client issued a request.' }
 [IO.File]::WriteAllText($resources, '{"DispatchVersion":"CNPRODWin3.2.0","DispatchSeed":"0123456789ABCDEF","DispatchSeed":"0123456789ABCDEF"}')
