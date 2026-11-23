@@ -31,7 +31,7 @@ impl<'a> Pipeline<'a> {
                 &data.nap,
             ),
             data,
-            potential_field: crate::potential::verified_potential_field(data),
+            potential_field: crate::potential::potential_mapping(data).field(),
         }
     }
 
@@ -39,7 +39,7 @@ impl<'a> Pipeline<'a> {
         self.decoder.session().pad_ready()
     }
 
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     pub fn enable_field_survey(&mut self, ids: &[u32]) -> Result<(), String> {
         self.state.field_survey = Some(crate::field_survey::FieldSurvey::new(self.data, ids)?);
         Ok(())
@@ -148,7 +148,7 @@ impl<'a> Pipeline<'a> {
                         ..
                     } => {
                         self.state.counters.decoded_messages += 1;
-                        #[cfg(any())]
+                        #[cfg(feature = "local-field-survey")]
                         if self.state.field_survey.is_some() && direction != Direction::Incoming {
                             continue;
                         }
@@ -168,7 +168,7 @@ impl<'a> Pipeline<'a> {
 
     pub fn accept_message(&mut self, command_id: u16, message: &Message) {
         let mine = &self.data.datamine;
-        #[cfg(any())]
+        #[cfg(feature = "local-field-survey")]
         if self.state.field_survey.is_some()
             && u32::from(command_id) != mine.cmd_get_avatar_data_sc_rsp
         {
@@ -188,7 +188,13 @@ impl<'a> Pipeline<'a> {
             }
             return;
         };
-        let observation = observe_response(kind, command_id, message, &self.data.nap);
+        let observation = observe_response(
+            kind,
+            command_id,
+            message,
+            &self.data.datamine,
+            &self.data.nap,
+        );
         let allowed = observation.allows_asset_observation();
         if !allowed {
             self.state
@@ -205,7 +211,7 @@ impl<'a> Pipeline<'a> {
         if !allowed {
             return;
         }
-        #[cfg(any())]
+        #[cfg(feature = "local-field-survey")]
         if let Some(survey) = &mut self.state.field_survey {
             if !survey.valid_anchor(command_id, message, self.data) {
                 return;
@@ -277,11 +283,27 @@ mod tests {
         .unwrap()
     }
 
+    fn status_field(data: &GameData, command: u16) -> u32 {
+        data.nap
+            .entry_by_cmd(command)
+            .unwrap()
+            .fields
+            .iter()
+            .find(|field| field.name == "BIGOOGEGJEL")
+            .unwrap()
+            .number as u32
+    }
+
     #[test]
     fn failed_response_cannot_become_a_successful_empty_inventory() {
         let data = data();
         let mut pipeline = Pipeline::new("synthetic".into(), 1, &data);
-        for (command, field) in [(3933, 12), (1382, 12), (2470, 8)] {
+        for command in [
+            data.datamine.cmd_get_equip_data_sc_rsp as u16,
+            data.datamine.cmd_get_weapon_data_sc_rsp as u16,
+            data.datamine.cmd_get_avatar_data_sc_rsp as u16,
+        ] {
+            let field = status_field(&data, command);
             pipeline.accept_message(
                 command,
                 &Message {
@@ -302,7 +324,12 @@ mod tests {
         let data = data();
         let mut zero = Pipeline::new("synthetic".into(), 1, &data);
         let mut omitted = Pipeline::new("synthetic".into(), 1, &data);
-        for (command, field) in [(3933, 12), (1382, 12), (2470, 8)] {
+        for command in [
+            data.datamine.cmd_get_equip_data_sc_rsp as u16,
+            data.datamine.cmd_get_weapon_data_sc_rsp as u16,
+            data.datamine.cmd_get_avatar_data_sc_rsp as u16,
+        ] {
+            let field = status_field(&data, command);
             zero.accept_message(
                 command,
                 &Message {
@@ -332,22 +359,19 @@ mod tests {
     fn malformed_status_is_rejected_and_incremental_unknown_uids_do_not_delete_records() {
         let data = data();
         let mut pipeline = Pipeline::new("synthetic".into(), 1, &data);
+        let command = data.datamine.cmd_get_equip_data_sc_rsp as u16;
+        let field = status_field(&data, command);
         pipeline.accept_message(
-            3933,
+            command,
             &Message {
-                fields: vec![Field::new(12, Value::LengthDelimited(vec![]))],
+                fields: vec![Field::new(field, Value::LengthDelimited(vec![]))],
             },
         );
         assert!(!pipeline.state.coverage.disc_load_received);
-        pipeline.accept_message(
-            data.datamine.cmd_player_sync_sc_notify as u16,
-            &Message::default(),
-        );
-        pipeline.accept_message(
-            data.datamine.cmd_dismantle_equip_cs_req as u16,
-            &Message::default(),
-        );
-        assert_eq!(pipeline.state.counters.incremental_messages_ignored, 2);
+        // The 3.2 avatar response id is not retargeted to the 3.3 response.
+        pipeline.accept_message(2470, &Message::default());
+        assert_eq!(pipeline.state.counters.incremental_messages_ignored, 0);
+        assert!(!pipeline.state.coverage.agent_load_received);
     }
 
     #[test]

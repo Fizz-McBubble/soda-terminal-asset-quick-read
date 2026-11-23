@@ -55,8 +55,11 @@ fn singular_message_occurrences_merge_fields_without_hiding_malformed_fragments(
 use zzz_wire::proto::{Field, Message, Value};
 
 fn committed_datamine() -> Datamine {
-    Datamine::parse(include_str!("../.upstream/assets/datamine.json"))
-        .expect("committed datamine.json should parse")
+    crate::protocol::load_protocol(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".upstream/assets"),
+    )
+    .expect("committed protocol should load")
+    .datamine
 }
 
 #[test]

@@ -16,7 +16,7 @@ internal static class ProtocolDownloadTests
             if (new FileInfo(archivePath).Length != ProtocolDownload.ArchiveSize)
                 throw new IOException("protocol_download_size_mismatch");
             var archiveBytes = File.ReadAllBytes(archivePath);
-            var manifestPin = new CatalogFile("runtime/assets/manifest.json", 24, "38006E92317CF8EBA3E578D58E5B0FC9AECFEC117D20DC375AA9BED2B073302E", true);
+            var manifestPin = new CatalogFile("runtime/assets/manifest.json", 24, "CAEBBE1A8AC8324109521B1477F67F6B10E387FC2B550486DE044027121D1CF8", true);
             using var manifest = ProtocolFallbackScope.ExtractAndVerifyEntry(archiveBytes, manifestPin, CancellationToken.None);
             var passed = Run(tempDir, manifest.ToArray(), archiveBytes);
             var report = new
@@ -69,7 +69,7 @@ internal static class ProtocolDownloadTests
             requests++;
             if (requests == 1) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
             Check(request.Headers.Accept.ToString() == "application/vnd.github.raw+json", "official_contents_accept");
-            Check(request.RequestUri!.Query == "?ref=4853f07c8fb5322c12b9b580d6364b577c2ac96a", "fixed_commit");
+            Check(request.RequestUri!.Query == "?ref=444d2ccf3bae448d6a205e5d35107e85d462875a", "fixed_commit");
             return Task.FromResult(Good());
         }, status: (source, code) => seen.Add(source + ":" + code)))
             Check(stream.Length == bytes.Length && requests == 2, "bounded_fallback_success");

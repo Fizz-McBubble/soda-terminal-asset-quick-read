@@ -24,8 +24,8 @@ ureq = "3"
 
 [features]
 default = []
-
-
+# Explicit local diagnostic only; never enabled by distribution builds.
+local-field-survey = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

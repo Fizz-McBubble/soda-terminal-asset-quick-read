@@ -18,6 +18,20 @@ internal static class Program
         var protocolLaunch = false;
         try
         {
+            // Build-time readback of the compiled verifier. No runtime files,
+            // host, game process or driver are opened by this command.
+            if (args.SequenceEqual(new[] { "--runtime-identity" }))
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    schemaVersion = 1,
+                    bridgeVersion = LaunchIdentity.Version,
+                    runtime = Security.Pinned,
+                    captureStarted = false,
+                    serviceStarted = false
+                }, Json));
+                return 0;
+            }
             if (args.SequenceEqual(new[] { "--self-test" })) return await SelfTests.Run();
             if (args.SequenceEqual(new[] { "--failure-self-test" })) return await CaptureFailureSelfTests.Run();
             if (args.Length == 2 && args[0] == "--capture-worker" && Guid.TryParseExact(args[1], "D", out var id))
@@ -29,6 +43,11 @@ internal static class Program
         catch (Exception error) when (args.SequenceEqual(new[] { "--failure-self-test" }))
         {
             Console.Error.WriteLine("failure_self_test_failed:" + error.GetType().Name + ":" + error.Message);
+            return 1;
+        }
+        catch (Exception error) when (args.SequenceEqual(new[] { "--self-test" }))
+        {
+            Console.Error.WriteLine("self_test_failed:" + error.GetType().Name + ":" + error.Message);
             return 1;
         }
         catch { Console.Error.WriteLine("bridge_start_failed"); if (protocolLaunch) LaunchIdentity.ShowLaunchFailure(); return 1; }

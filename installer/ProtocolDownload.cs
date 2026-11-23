@@ -5,16 +5,18 @@ internal sealed record DownloadBudget(TimeSpan Headers, TimeSpan Idle, TimeSpan 
 }
 internal static class ProtocolDownload
 {
-    private const string Base = "https://raw.githubusercontent.com/pingwinekZ/zzz_packet_capture_0delay/4853f07c8fb5322c12b9b580d6364b577c2ac96a/assets/";
-    internal const string ArchiveUrl = "https://codeload.github.com/pingwinekZ/zzz_packet_capture_0delay/zip/4853f07c8fb5322c12b9b580d6364b577c2ac96a";
-    internal const string ArchiveSha256 = "39EB5B5C3D2AC9E5F207280902112FF0DE08B38966FDD49B25D7BCB92F8EB640";
-    internal const long ArchiveSize = 556844L;
-    internal const string ArchiveZipPrefix = "zzz_packet_capture_0delay-4853f07c8fb5322c12b9b580d6364b577c2ac96a/assets/";
+    private const string Repository = "AleXu224/zzz_packet_capture";
+    private const string Commit = "444d2ccf3bae448d6a205e5d35107e85d462875a";
+    private const string Base = "https://raw.githubusercontent.com/" + Repository + "/" + Commit + "/assets/";
+    internal const string ArchiveUrl = "https://codeload.github.com/" + Repository + "/zip/" + Commit;
+    internal const string ArchiveSha256 = "D02DB913829549689E52FCDE062D7711D9DD279AFCF85622EDB4CFBF6B717445";
+    internal const long ArchiveSize = 352757L;
+    internal const string ArchiveZipPrefix = "zzz_packet_capture-" + Commit + "/assets/";
     private static readonly Dictionary<string, string> Pins = new(StringComparer.Ordinal)
     {
-        ["runtime/assets/manifest.json"] = "38006E92317CF8EBA3E578D58E5B0FC9AECFEC117D20DC375AA9BED2B073302E",
-        ["runtime/assets/datamine.json"] = "9702AB5EE0CB44A18D8D3BE9AE2C5934DEB4883989ADA292A3BBD44654EFB449",
-        ["runtime/assets/nap.json"] = "2DFB176209CECEAB5AB53701F12FA3050AD70140004118B7A80AC32A01DF982D"
+        ["runtime/assets/manifest.json"] = "CAEBBE1A8AC8324109521B1477F67F6B10E387FC2B550486DE044027121D1CF8",
+        ["runtime/assets/datamine.json"] = "C7FAC8E4CDF0E59CAD967AA0C8A21D5DB54E746902E484DF632E65800F127F04",
+        ["runtime/assets/nap.json"] = "8FFA529920FE01265A8538BE06B821DC9B62247419C2200C837F24F4441F6DF6"
     };
     internal static string Url(CatalogFile pin)
     {
@@ -28,8 +30,8 @@ internal static class ProtocolDownload
         var raw = Url(pin);
         if (testBudget is not null && clientFactory is null) throw new ArgumentException("test_budget_requires_fake_client");
         var budget = testBudget ?? DownloadBudget.Production;
-        var contents = "https://api.github.com/repos/pingwinekZ/zzz_packet_capture_0delay/contents/assets/" + pin.Path.Split('/').Last() +
-            "?ref=4853f07c8fb5322c12b9b580d6364b577c2ac96a";
+        var contents = "https://api.github.com/repos/" + Repository + "/contents/assets/" + pin.Path.Split('/').Last() +
+            "?ref=" + Commit;
         var failure = "protocol_download_failed";
         // Try both official sources before one bounded retry round. Never follow redirects.
         for (var round = 0; round < 2; round++)

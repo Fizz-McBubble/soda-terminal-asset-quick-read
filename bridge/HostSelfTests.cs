@@ -252,8 +252,8 @@ internal static class HostSelfTests
             using (var s = File.OpenRead(dllPath)) selfDllHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(s));
 
             var installationRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", ".."));
-            var contract = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), selfExeHash, selfDllHash);
-            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", "1.0.7"), "isolated_versioned_root");
+            var contract = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), selfExeHash, selfDllHash, LaunchIdentity.Version);
+            Check(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar) == Path.Combine(installationRoot, "versions", LaunchIdentity.Version), "isolated_versioned_root");
             using var legacyProcess = Launch(Start("legacy-1.0.3"))!;
             var legacyPid = legacyProcess.Id;
             var readyDeadline = DateTime.UtcNow.AddSeconds(5);
@@ -293,17 +293,17 @@ internal static class HostSelfTests
                 Check(!await ServiceReadiness.RecheckAndTerminate(altered, test: contract), "forged_identity_refused");
                 Check(!legacyProcess.HasExited, "forged_identity_keeps_old_process");
             }
-            var foreign = new ServiceReadiness.IsolatedTestContract(Path.Combine(installationRoot, "foreign"), port, Pipe(id), selfExeHash, selfDllHash);
+            var foreign = new ServiceReadiness.IsolatedTestContract(Path.Combine(installationRoot, "foreign"), port, Pipe(id), selfExeHash, selfDllHash, LaunchIdentity.Version);
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: foreign) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(inspected!, test: foreign) && !legacyProcess.HasExited, "foreign_root_even_exact_bytes_preserved");
-            var wrongPins = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), new string('0', 64), selfDllHash);
+            var wrongPins = new ServiceReadiness.IsolatedTestContract(installationRoot, port, Pipe(id), new string('0', 64), selfDllHash, LaunchIdentity.Version);
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: wrongPins) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(inspected!, test: wrongPins) && !legacyProcess.HasExited, "wrong_pins_preserved");
             var junction = Path.Combine(installationRoot, "linked-root-" + Guid.NewGuid().ToString("N"));
             var linkStart = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "/c", "mklink", "/J", junction, installationRoot }) linkStart.ArgumentList.Add(arg);
             using (var link = Process.Start(linkStart)!) { await link.WaitForExitAsync(); Check(link.ExitCode == 0, "isolated_junction_created"); }
-            var linked = new ServiceReadiness.IsolatedTestContract(junction, port, Pipe(id), selfExeHash, selfDllHash);
+            var linked = new ServiceReadiness.IsolatedTestContract(junction, port, Pipe(id), selfExeHash, selfDllHash, LaunchIdentity.Version);
             var linkedRecord = inspected! with { Directory = Path.Combine(junction, "versions", "1.0.7"), ExecutablePath = Path.Combine(junction, "versions", "1.0.7", "Soda.AssetQuickRead.Bridge.exe") };
             Check(await ServiceReadiness.InspectOldBridge(port, Pipe(id), test: linked) is null &&
                 !await ServiceReadiness.RecheckAndTerminate(linkedRecord, test: linked) && !legacyProcess.HasExited, "linked_root_refused_and_preserved");

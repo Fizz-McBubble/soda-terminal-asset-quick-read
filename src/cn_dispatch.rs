@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ureq::{http::Uri, Agent};
 use zzz_crypto::{b64_decode, ec2b, rsa};
 
-pub const QUERY_URI: &str = "https://globaldp-prod-cn01.juequling.com/query_dispatch?version=CNPRODWin3.2.0&language=2&channel_id=1&sub_channel_id=1&platform=3";
+pub fn query_uri() -> String {
+    format!("https://globaldp-prod-cn01.juequling.com/query_dispatch?version={}&language=2&channel_id=1&sub_channel_id=1&platform=3", crate::protocol::pinned_cn_client_version())
+}
 pub const LABEL: &str = "CN-public-dispatch-candidate";
 const BODY_LIMIT: u64 = 65536;
 
@@ -157,7 +159,7 @@ fn fetch_seed_with(
             return Err("public_http_seed_shape_rejected");
         }
         receipt.requests_attempted += 1;
-        let (status, body) = fetch(QUERY_URI)?;
+        let (status, body) = fetch(&query_uri())?;
         receipt.query_http_status = Some(status);
         if status != 200 {
             return Err("public_query_http_rejected");
@@ -239,7 +241,8 @@ fn gateway_uri(dispatch: &str, seed: &str) -> Result<String, &'static str> {
     // The generated-value mode remains an unverified historical candidate.
     // Both modes keep this separate from the initial pad seed and never persist it.
     Ok(format!(
-        "{dispatch}?version=CNPRODWin3.2.0&rsa_ver=3&language=2&platform=3&seed={seed}&channel_id=1&sub_channel_id=1"
+        "{dispatch}?version={}&rsa_ver=3&language=2&platform=3&seed={seed}&channel_id=1&sub_channel_id=1",
+        crate::protocol::pinned_cn_client_version()
     ))
 }
 

@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/AleXu224/zzz_packet_capture",
+  "commit": "444d2ccf3bae448d6a205e5d35107e85d462875a",
+  "commitTimestamp": "2026-10-21T21:31:43Z",
+  "observedAt": "2026-10-23",
+  "license": "MIT",
+  "licenseSha256": "7d6d35225a5b07b2ded6eb5e61036a36a469f915b911e11948dcd4062165ac44",
+  "files": {
+    "manifest.json": {
+      "size": 24,
+      "sha256": "caebbe1a8ac8324109521b1477f67f6b10e387fc2b550486de044027121d1cf8"
+    },
+    "datamine.json": {
+      "size": 1131,
+      "sha256": "c7fac8e4cdf0e59cad967aa0c8a21d5db54e746902e484df632e65800f127f04"
+    },
+    "nap.json": {
+      "size": 1987946,
+      "sha256": "8ffa529920fe01265a8538be06b821dc9b62247419c2200c837f24f4441f6df6"
+    }
+  }
+}

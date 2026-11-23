@@ -23,11 +23,7 @@ pub fn capture(
     let executable = std::env::current_exe().map_err(|_| "executable_path_unknown")?;
     verify_driver_files(executable.parent().ok_or("executable_directory_unknown")?)?;
     restrict_dll_search()?;
-    let capture = Capture::open(GAME_PORT).map_err(|error| match error {
-        CaptureError::OpenFailed { code, .. } => format!("capture_open_failed_win32:{code}"),
-        CaptureError::DllMissing => "capture_dll_unavailable".into(),
-        _ => "capture_open_failed".into(),
-    })?;
+    let capture = open_capture(Capture::open, GAME_PORT)?;
     let finished = Arc::new(AtomicBool::new(false));
     let cancelled = Arc::new(AtomicBool::new(false));
     let timed_out = Arc::new(AtomicBool::new(false));
@@ -54,11 +50,11 @@ pub fn capture(
     });
     eprintln!("status:waiting_for_normal_game_login");
     let mut selected = None;
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     let survey_mode = pipelines
         .iter()
         .any(|pipeline| pipeline.state.field_survey.is_some());
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     let mut survey_ready_reported = false;
     let mut buffer = vec![0u8; 65535];
     let mut reason = "capture_ended_before_all_loads";
@@ -83,7 +79,12 @@ pub fn capture(
                 Err(_) => return Err("capture_receive_failed".into()),
             };
             let Some(packet) = received else {
-                break;
+                if cancelled.load(Ordering::Acquire) || timed_out.load(Ordering::Acquire) {
+                    break;
+                }
+                // The pinned backend maps an unexpected no-data end to Ok(None).
+                // Preserve it as a receive failure instead of a partial candidate.
+                return Err("capture_receive_failed".into());
             };
             // Shutdown may leave queued copies; do not drain them after cancellation.
             if cancelled.load(Ordering::Acquire) || timed_out.load(Ordering::Acquire) {
@@ -99,7 +100,7 @@ pub fn capture(
                 reason = "load_responses_observed";
                 break;
             }
-            #[cfg(any())]
+            #[cfg(feature = "local-field-survey")]
             if survey_mode
                 && !survey_ready_reported
                 && selected.is_some_and(|index| {
@@ -148,12 +149,53 @@ pub fn capture(
         reason = "cancelled";
     } else if timed_out.load(Ordering::Acquire) {
         reason = "timed_out";
-        #[cfg(any())]
+        #[cfg(feature = "local-field-survey")]
         if survey_mode {
             reason = "survey_window_elapsed";
         }
     }
     Ok(finalize(pipelines, selected, context, reason))
+}
+
+#[cfg(windows)]
+fn open_capture<F>(mut open: F, port: u16) -> Result<zzz_capture::Capture, String>
+where
+    F: FnMut(u16) -> Result<zzz_capture::Capture, zzz_capture::CaptureError>,
+{
+    const OPEN_ATTEMPTS: u8 = 2;
+    for attempt in 1..=OPEN_ATTEMPTS {
+        match open(port) {
+            Ok(capture) => return Ok(capture),
+            Err(error) if retry_open_after_resource_failure(&error, attempt, OPEN_ATTEMPTS) => {
+                thread::sleep(Duration::from_millis(150));
+            }
+            Err(error) => return Err(open_error_code(&error)),
+        }
+    }
+    Err("capture_open_failed".into())
+}
+
+#[cfg(windows)]
+fn retry_open_after_resource_failure(
+    error: &zzz_capture::CaptureError,
+    attempt: u8,
+    attempts: u8,
+) -> bool {
+    matches!(
+        error,
+        zzz_capture::CaptureError::OpenFailed { code: 1450, .. }
+    ) && attempt < attempts
+}
+
+#[cfg(windows)]
+fn open_error_code(error: &zzz_capture::CaptureError) -> String {
+    match error {
+        zzz_capture::CaptureError::OpenFailed { code, .. } => {
+            format!("capture_open_failed_win32:{code}")
+        }
+        zzz_capture::CaptureError::DllMissing => "capture_dll_unavailable".into(),
+        _ => "capture_open_failed".into(),
+    }
 }
 
 fn expected_shutdown(error: &zzz_capture::CaptureError, stop_requested: bool) -> bool {
@@ -191,5 +233,24 @@ mod tests {
         assert!(!expected_shutdown(&CaptureError::RecvFailed(232), false));
         assert!(!expected_shutdown(&CaptureError::RecvFailed(5), true));
         assert!(!expected_shutdown(&CaptureError::BufferTooSmall, true));
+    }
+
+    #[test]
+    fn only_one_bounded_retry_follows_1450_open_failure() {
+        use zzz_capture::CaptureError;
+        let resource = CaptureError::OpenFailed {
+            filter: "synthetic".into(),
+            code: 1450,
+        };
+        assert!(retry_open_after_resource_failure(&resource, 1, 2));
+        assert!(!retry_open_after_resource_failure(&resource, 2, 2));
+        assert!(!retry_open_after_resource_failure(
+            &CaptureError::OpenFailed {
+                filter: "synthetic".into(),
+                code: 577,
+            },
+            1,
+            2
+        ));
     }
 }

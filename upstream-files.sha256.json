@@ -33,7 +33,7 @@
   "rust/crates/zzz-wire/src/proto.rs": "1cd558f420200ab81f594b268678bcfecef61e49eb6cc6267226d2383e3a7369",
   "rust/crates/zzz-wire/src/protonap.rs": "29f5537c7adf9b563e32ea2c79e6d7e607325731225e6bb2f2d4d3f22fe8a035",
   "rust/crates/zzz-wire/src/xor_fields.rs": "91d572d015f4c1586e3cca1f3ea94a9bbfe5e1293b379990843dedb0a7f68506",
-  "assets/manifest.json": "38006e92317cf8eba3e578d58e5b0fc9aecfec117d20dc375aa9bed2b073302e",
-  "assets/datamine.json": "9702ab5ee0cb44a18d8d3be9ae2c5934deb4883989ada292a3bbd44654efb449",
-  "assets/nap.json": "2dfb176209ceceab5ab53701f12fa3050ad70140004118b7a80ac32a01df982d"
+  "assets/manifest.json": "caebbe1a8ac8324109521b1477f67f6b10e387fc2b550486de044027121d1cf8",
+  "assets/datamine.json": "c7fac8e4cdf0e59cad967aa0c8a21d5db54e746902e484df632e65800f127f04",
+  "assets/nap.json": "8ffa529920fe01265a8538be06b821dc9b62247419c2200c837f24f4441f6df6"
 }

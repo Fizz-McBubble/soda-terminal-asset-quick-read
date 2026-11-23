@@ -15,13 +15,26 @@ internal static class Snapshot
             using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
             var root = json.RootElement;
             var evidence = CandidateEvidenceRules.FromDocument(root);
-            if (evidence.Status == "validation_failed" || evidence.IssueCount is > 0) throw new ApiFault(409, "candidate_validation_issues", evidence.Status, evidence.IssueCount);
-            if (root.GetProperty("schema").GetString() != "soda-asset-snapshot-probe/v1" || root.GetProperty("stop_reason").GetString() != "load_responses_observed") throw new ApiFault(409, "candidate_schema_invalid", evidence.Status, evidence.IssueCount);
-            if (evidence.Status is not ("staged_for_field_review" or "response_semantics_unverified")) throw new ApiFault(409, "candidate_status_invalid", evidence.Status, evidence.IssueCount);
-            var issues = root.GetProperty("issues");
-            if (issues.ValueKind != JsonValueKind.Array || issues.GetArrayLength() != 0) throw new ApiFault(409, "candidate_validation_issues", evidence.Status, evidence.IssueCount);
+            if (!root.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.String ||
+                !root.TryGetProperty("stop_reason", out var stopReason) || stopReason.ValueKind != JsonValueKind.String)
+                throw new ApiFault(409, "candidate_schema_invalid", evidence.Status, evidence.IssueCount);
+            if (evidence.Status is not ("validation_failed" or "staged_for_field_review" or "response_semantics_unverified")) throw new ApiFault(409, "candidate_status_invalid", evidence.Status, evidence.IssueCount);
             var coverage = root.GetProperty("coverage");
             if (!coverage.GetProperty("disc_load_received").GetBoolean() || !coverage.GetProperty("engine_load_received").GetBoolean() || !coverage.GetProperty("agent_load_received").GetBoolean()) throw new ApiFault(409, "candidate_coverage_incomplete", evidence.Status, evidence.IssueCount);
+            if (!root.TryGetProperty("issues", out var issues))
+            {
+                if (evidence.Status == "validation_failed") throw new ApiFault(409, "candidate_validation_issues", evidence.Status, evidence.IssueCount);
+                throw new ApiFault(409, "candidate_schema_invalid", evidence.Status, evidence.IssueCount);
+            }
+            if (issues.ValueKind != JsonValueKind.Array) throw new ApiFault(409, "candidate_schema_invalid", evidence.Status, evidence.IssueCount);
+            if (evidence.Status == "validation_failed" || evidence.IssueCount is > 0)
+            {
+                var code = CandidateEvidenceRules.IssueClass(root) == CandidateIssueClass.FieldInvalid
+                    ? "candidate_schema_invalid"
+                    : "candidate_validation_issues";
+                throw new ApiFault(409, code, evidence.Status, evidence.IssueCount);
+            }
+            if (schema.GetString() != "soda-asset-snapshot-probe/v1" || stopReason.GetString() != "load_responses_observed") throw new ApiFault(409, "candidate_schema_invalid", evidence.Status, evidence.IssueCount);
             foreach (var flag in new[] { "account_write_enabled", "raw_traffic_saved", "ready_for_account_import", "full_inventory_verified", "independent_inventory_total_verified" })
                 if (root.GetProperty(flag).ValueKind != JsonValueKind.False) throw new ApiFault(409, "candidate_safety_flags_invalid", evidence.Status, evidence.IssueCount);
             if (root.GetProperty("response_status_semantics_verified").ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new ApiFault(409, "candidate_semantics_invalid", evidence.Status, evidence.IssueCount);

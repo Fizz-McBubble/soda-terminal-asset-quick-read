@@ -121,11 +121,12 @@ internal static class ServiceReadiness
         internal string PipeName { get; }
         internal string ExeHash { get; }
         internal string DllHash { get; }
+        internal string CurrentVersion { get; }
         internal int[] Ports { get; private init; }
         internal bool PublishedOnly { get; private init; }
-        internal IsolatedTestContract(string root, int port, string pipeName, string exeHash, string dllHash)
+        internal IsolatedTestContract(string root, int port, string pipeName, string exeHash, string dllHash, string currentVersion)
         {
-            Root = Path.GetFullPath(root); Port = port; Ports = [port]; PipeName = pipeName; ExeHash = exeHash; DllHash = dllHash;
+            Root = Path.GetFullPath(root); Port = port; Ports = [port]; PipeName = pipeName; ExeHash = exeHash; DllHash = dllHash; CurrentVersion = currentVersion;
             if (Root.Equals(DefaultRoot, StringComparison.OrdinalIgnoreCase) || Root.StartsWith(DefaultRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || ServicePorts.Contains(port) || port is < 1024 or > 65535 ||
                 !pipeName.StartsWith("SodaTerminal.AssetQuickRead.HostSelfTest.", StringComparison.Ordinal) ||
                 !Guid.TryParseExact(pipeName["SodaTerminal.AssetQuickRead.HostSelfTest.".Length..], "N", out _))
@@ -135,7 +136,7 @@ internal static class ServiceReadiness
         {
             if (ports.Length is < 1 or > 3 || ports.Distinct().Count() != ports.Length || ports.Any(port => ServicePorts.Contains(port) || port is < 1024 or > 65535))
                 throw new IOException("isolated_old_host_contract_required");
-            return new(root, ports[0], pipeName, "", "") { Ports = ports.ToArray(), PublishedOnly = true };
+            return new(root, ports[0], pipeName, "", "", "") { Ports = ports.ToArray(), PublishedOnly = true };
         }
     }
     internal sealed record CurrentInstallation(string Version, string WireVersion, string ExeSha256, string DllSha256);
@@ -144,16 +145,17 @@ internal static class ServiceReadiness
         if (test is null ? !ServicePorts.Contains(port) || pipeName != "SodaTerminal.AssetQuickRead.Identity.50609" : !test.Ports.Contains(port) || pipeName != test.PipeName) return false;
         var installVersion = Path.GetFileName(directory);
         var expected = Path.Combine(test?.Root ?? DefaultRoot, "versions", installVersion);
+        var syntheticOldFixture = test is { PublishedOnly: false } && version == "1.0.3" && installVersion == test.CurrentVersion;
         if (!Path.GetFullPath(directory).Equals(expected, StringComparison.OrdinalIgnoreCase) ||
             !Path.GetFullPath(executable).Equals(Path.Combine(expected, "Soda.AssetQuickRead.Bridge.exe"), StringComparison.OrdinalIgnoreCase) ||
-            !(PublishedWireVersion(installVersion) == version || current is not null && current.Version == installVersion && current.WireVersion == version)) return false;
+            !(PublishedWireVersion(installVersion) == version || current is not null && current.Version == installVersion && current.WireVersion == version || syntheticOldFixture)) return false;
         RejectLinks(executable); RejectLinks(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         using var exe = File.OpenRead(executable);
         using var dll = File.OpenRead(Path.Combine(directory, "Soda.AssetQuickRead.Bridge.dll"));
         var exeHash = Convert.ToHexString(SHA256.HashData(exe)); var dllHash = Convert.ToHexString(SHA256.HashData(dll));
         if (current is not null && installVersion == current.Version && version == current.WireVersion && exeHash == current.ExeSha256 && dllHash == current.DllSha256) return true;
         return test is null || test.PublishedOnly ? MatchesPublishedInstallation(installVersion, version, exeHash, dllHash) :
-            version == "1.0.3" && installVersion == "1.0.7" && exeHash == test.ExeHash && dllHash == test.DllHash;
+            syntheticOldFixture && exeHash == test.ExeHash && dllHash == test.DllHash;
     }
     private static async Task<string?> ReadBanner(StreamReader reader, CancellationToken cancellation)
     {

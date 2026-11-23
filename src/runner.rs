@@ -1,6 +1,6 @@
 use crate::{
     pipeline::Pipeline,
-    protocol::protocol_hashes,
+    protocol::{pinned_protocol_version, protocol_hashes},
     snapshot::{Report, SeedDiagnostics, Source, UPSTREAM_COMMIT},
     validation::validate_snapshot,
 };
@@ -101,7 +101,7 @@ pub fn finalize(
     validate_snapshot(&mut chosen.state);
     let source = Source {
         upstream_commit: UPSTREAM_COMMIT,
-        protocol_version: "3.2".into(),
+        protocol_version: pinned_protocol_version().into(),
         requested_game_region: context.game_region,
         decoded_seed_label: seed_label,
         account_label: context.account_label,

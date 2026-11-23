@@ -7,7 +7,8 @@ use std::{fs, io::Read, path::Path};
 
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_OBJECT_BYTES: usize = 16 * 1024;
-const EXPECTED_VERSION: &str = "CNPRODWin3.2.0";
+#[cfg(test)]
+const EXPECTED_VERSION: &str = "CNPRODWin3.3.0";
 const VERSION_MARKER: &[u8] = b"\"DispatchVersion\"";
 const SEED_MARKER: &[u8] = b"\"DispatchSeed\"";
 
@@ -192,7 +193,8 @@ fn inspect_bytes(bytes: &[u8]) -> Inspection {
             continue;
         };
         receipt.same_json_object = true;
-        receipt.expected_cn_version_matches = fields.version == EXPECTED_VERSION;
+        receipt.expected_cn_version_matches =
+            fields.version == crate::protocol::pinned_cn_client_version();
         receipt.seed_characters = Some(fields.seed.chars().count());
         receipt.seed_is_16_hex =
             fields.seed.len() == 16 && fields.seed.bytes().all(|byte| byte.is_ascii_hexdigit());
@@ -231,7 +233,7 @@ mod tests {
     #[test]
     fn binary_wrapping_and_reversed_field_order_do_not_export_values() {
         let mut bytes = vec![0xff, 0, 0x80];
-        bytes.extend_from_slice(br#"{"DispatchSeed":"0123456789ABCDEF","DispatchVersion":"CNPRODWin3.2.0","Ignored":"private-example-do-not-export"}"#);
+        bytes.extend_from_slice(br#"{"DispatchSeed":"0123456789ABCDEF","DispatchVersion":"CNPRODWin3.3.0","Ignored":"private-example-do-not-export"}"#);
         bytes.extend_from_slice(&[0, 0xff]);
         let inspected = inspect_bytes(&bytes);
         assert_eq!(inspected.receipt.status, "client_request_fields_valid");
@@ -244,9 +246,9 @@ mod tests {
     #[test]
     fn missing_duplicate_and_cross_object_pairs_are_not_request_inputs() {
         for bytes in [
-            br#"{"DispatchVersion":"CNPRODWin3.2.0"}"#.to_vec(),
-            br#"{"DispatchVersion":"CNPRODWin3.2.0","DispatchSeed":"0123456789abcdef","DispatchSeed":"0123456789abcdef"}"#.to_vec(),
-            br#"{"DispatchVersion":"CNPRODWin3.2.0"}{"DispatchSeed":"0123456789abcdef"}"#.to_vec(),
+            br#"{"DispatchVersion":"CNPRODWin3.3.0"}"#.to_vec(),
+            br#"{"DispatchVersion":"CNPRODWin3.3.0","DispatchSeed":"0123456789abcdef","DispatchSeed":"0123456789abcdef"}"#.to_vec(),
+            br#"{"DispatchVersion":"CNPRODWin3.3.0"}{"DispatchSeed":"0123456789abcdef"}"#.to_vec(),
         ] {
             let inspected = inspect_bytes(&bytes);
             assert!(inspected.seed.is_none());
@@ -264,6 +266,11 @@ mod tests {
             ),
             (
                 "CNPRODWin3.1.0",
+                "0123456789abcdef",
+                "client_dispatch_version_rejected",
+            ),
+            (
+                "CNPRODWin3.2.0",
                 "0123456789abcdef",
                 "client_dispatch_version_rejected",
             ),
@@ -291,10 +298,10 @@ mod tests {
 
     #[test]
     fn malformed_oversized_and_nested_pairs_do_not_pass() {
-        let nested = br#"{"a":{"DispatchVersion":"CNPRODWin3.2.0"},"b":{"DispatchSeed":"0123456789abcdef"}}"#;
+        let nested = br#"{"a":{"DispatchVersion":"CNPRODWin3.3.0"},"b":{"DispatchSeed":"0123456789abcdef"}}"#;
         assert!(inspect_bytes(nested).seed.is_none());
         assert!(
-            inspect_bytes(br#"{"DispatchVersion":"CNPRODWin3.2.0","DispatchSeed":16}"#)
+            inspect_bytes(br#"{"DispatchVersion":"CNPRODWin3.3.0","DispatchSeed":16}"#)
                 .seed
                 .is_none()
         );

@@ -31,6 +31,26 @@ internal static class SelfTests
     internal static async Task<int> Run()
     {
         if (await HostSelfTests.RunChild() is { } childExit) return childExit;
+        var originalConsoleOutput = Console.Out;
+        using (var identityOutput = new StringWriter())
+        {
+            try
+            {
+                Console.SetOut(identityOutput);
+                Check(await Program.Main(["--runtime-identity"]) == 0, "runtime_identity_exit");
+            }
+            finally { Console.SetOut(originalConsoleOutput); }
+            using var identity = JsonDocument.Parse(identityOutput.ToString());
+            var body = identity.RootElement;
+            Check(body.GetProperty("schemaVersion").GetInt32() == 1, "runtime_identity_schema");
+            Check(body.GetProperty("bridgeVersion").GetString() == LaunchIdentity.Version, "runtime_identity_version");
+            Check(!body.GetProperty("captureStarted").GetBoolean() && !body.GetProperty("serviceStarted").GetBoolean(), "runtime_identity_no_service");
+            var pins = body.GetProperty("runtime");
+            Check(pins.EnumerateObject().Count() == Security.Pinned.Count, "runtime_identity_exact_keys");
+            foreach (var pin in Security.Pinned)
+                Check(pins.GetProperty(pin.Key).GetString() == pin.Value, "runtime_identity_compiled_pin");
+        }
+        checks += await OriginSecurityTests.Run();
         await CaptureFailureSelfTests.Run();
         checks += await HostSelfTests.Run();
         // Synthetic-only files are deliberately retained for review; no cleanup touches existing candidates.

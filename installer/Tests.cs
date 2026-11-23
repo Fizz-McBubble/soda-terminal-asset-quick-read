@@ -140,7 +140,7 @@ internal static class Tests
                 Check(File.Exists(Path.Combine(realTarget, "licenses", "Rust-STDLIB-COPYRIGHT.html")), "rust_standard_library_notice");
                 using (var publicZip = ZipFile.OpenRead(realArchive)) Check(!publicZip.Entries.Any(x => x.FullName.StartsWith("runtime/assets/")), "public_payload_excludes_protocol_assets");
                 foreach (var pin in realCatalog.Files.Where(x => x.Download))
-                    Check(ProtocolDownload.Url(pin).StartsWith("https://raw.githubusercontent.com/pingwinekZ/zzz_packet_capture_0delay/4853f07c8fb5322c12b9b580d6364b577c2ac96a/assets/", StringComparison.Ordinal), "fixed_protocol_source");
+                    Check(ProtocolDownload.Url(pin).StartsWith("https://raw.githubusercontent.com/AleXu224/zzz_packet_capture/444d2ccf3bae448d6a205e5d35107e85d462875a/assets/", StringComparison.Ordinal), "fixed_protocol_source");
                 Refuses(() => ProtocolDownload.Url(new CatalogFile("runtime/assets/evil.json", 1, "wrong", true)), "arbitrary_download_rejected");
                 var rejectedRoot = Path.Combine(root, "download-failure"); var rejectedRegistration = new Registration();
                 Refuses(() => InstallEngine.Install(realArchive, realCatalog, rejectedRoot, rejectedRegistration, CancellationToken.None, _ => { }, (_, _) => throw new IOException("synthetic_download_failure")), "download_failure");

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use soda_asset_capture::{
     client_dispatch, cn_dispatch, live,
-    protocol::{load_protocol, protocol_hashes},
+    protocol::{load_protocol, pinned_cn_client_version, pinned_protocol_version, protocol_hashes},
     runner::{
         candidates, feed_candidates, finalize, unix_seconds, write_report, Replay, RunContext,
     },
@@ -25,7 +25,7 @@ enum Command {
     /// Inspect pinned protocol support without opening WinDivert or observing traffic.
     Inspect,
     /// Explicit selected-agent local diagnostic; never saves a full inventory or imports.
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     FieldSurvey {
         #[arg(long)]
         out: PathBuf,
@@ -96,7 +96,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run(cli: Cli) -> Result<u8, String> {
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     if let Command::FieldSurvey { out, agent_ids, .. } = &cli.command {
         soda_asset_capture::field_survey::validate_agent_ids(agent_ids)?;
         soda_asset_capture::field_survey_run::validate_output(out)?;
@@ -113,7 +113,7 @@ fn run(cli: Cli) -> Result<u8, String> {
         let summary = serde_json::json!({
             "schema":"soda-client-dispatch-field-check/v1",
             "client_resource_fields":receipt,
-            "expectedVersion":"CNPRODWin3.2.0",
+            "expectedVersion":pinned_cn_client_version(),
             "requestsAttempted":0, "liveCaptureStarted":false,
             "rawFileSaved":false, "requestSeedSaved":false,
             "unselectedFieldsExported":false, "accountWriteEnabled":false
@@ -134,7 +134,7 @@ fn run(cli: Cli) -> Result<u8, String> {
     let assets = cli.assets.unwrap_or_else(|| directory.join("assets"));
     let data = load_protocol(&assets)?;
     let report = match cli.command {
-        #[cfg(any())]
+        #[cfg(feature = "local-field-survey")]
         Command::FieldSurvey {
             out,
             agent_ids,
@@ -156,7 +156,9 @@ fn run(cli: Cli) -> Result<u8, String> {
                 "{}",
                 serde_json::json!({
                     "schema": "soda-asset-capture-inspect/v1",
-                    "protocolVersion": "3.2", "upstreamCommit": soda_asset_capture::snapshot::UPSTREAM_COMMIT,
+                    "protocolVersion": pinned_protocol_version(),
+                    "protocolUpstreamCommit": soda_asset_capture::snapshot::UPSTREAM_COMMIT,
+                    "parserUpstreamCommit": soda_asset_capture::protocol::PARSER_UPSTREAM_COMMIT,
                     "knownSeedLabels": data.datamine.xor_seeds.keys().collect::<Vec<_>>(),
                     "cnSupport": "unverified", "protocolHashes": protocol_hashes(),
                     "liveCaptureStarted": false, "accountWriteEnabled": false,

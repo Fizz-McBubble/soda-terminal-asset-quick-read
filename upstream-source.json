@@ -5,6 +5,16 @@
   "archiveUrl": "https://codeload.github.com/pingwinekZ/zzz_packet_capture_0delay/zip/4853f07c8fb5322c12b9b580d6364b577c2ac96a",
   "archiveSha256": "39eb5b5c3d2ac9e5f207280902112ff0de08b38966fdd49b25d7bcb92f8eb640",
   "codeLicense": "MIT",
-  "scope": "Fixed build input; code MIT; protocol data redistribution requires separate rights review",
-  "runtimeNetworkUpdates": false
+  "scope": "Rust parser code only; protocol data is pinned separately",
+  "runtimeNetworkUpdates": false,
+  "protocolSource": {
+    "repository": "https://github.com/AleXu224/zzz_packet_capture",
+    "commit": "444d2ccf3bae448d6a205e5d35107e85d462875a",
+    "commitTimestamp": "2026-10-21T21:31:43Z",
+    "archiveUrl": "https://codeload.github.com/AleXu224/zzz_packet_capture/zip/444d2ccf3bae448d6a205e5d35107e85d462875a",
+    "archiveSha256": "d02db913829549689e52fcde062d7711d9dd279afcf85622edb4cfbf6b717445",
+    "archiveSize": 352757,
+    "codeLicense": "MIT",
+    "scope": "manifest, datamine and protocol descriptor data only; no game assets are bundled"
+  }
 }

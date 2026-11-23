@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath=(Get-Command dotnet -ErrorAction Stop).Source, [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory, [string]$ReusePublishedPayloadDirectory)
+param([Parameter(Mandatory)][string]$BridgeOutputDirectory, [Parameter(Mandatory)][string]$OutputDirectory, [string]$NsisPath, [string]$DotNetPath='E:\DevTools\DotNet\8.0.423\dotnet.exe', [switch]$RunTests, [string]$TemporaryDirectory, [string]$RuntimeDirectory, [string]$ReusePublishedPayloadDirectory)
 $ErrorActionPreference='Stop'
 function Test-LockedRustNotice([string]$LockPath, [string]$NoticePath) {
     if (-not (Test-Path -LiteralPath $NoticePath)) { return $false }
@@ -17,7 +17,7 @@ function Test-LockedRustNotice([string]$LockPath, [string]$NoticePath) {
     }
     return $expected -cin $identities
 }
-$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
+$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { 'F:\AI项目\SodaTerminal\ZZZ-derived' }
 if (-not $TemporaryDirectory) { $TemporaryDirectory = if ($env:SODA_BUILD_TEMP_DIRECTORY) { $env:SODA_BUILD_TEMP_DIRECTORY } else { Join-Path $derivedRoot 'temp\asset-quick-read-installer' } }
 $buildEnvironmentBefore = @{}
 foreach ($name in @('TEMP', 'TMP', 'DOTNET_CLI_HOME', 'DOTNET_ROOT', 'NUGET_PACKAGES', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_SKIP_FIRST_TIME_EXPERIENCE')) { $buildEnvironmentBefore[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
@@ -31,8 +31,7 @@ if(Test-Path -LiteralPath $output){throw 'Output must be new; existing evidence 
 $pin=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer/nsis-toolchain.json') -Raw | ConvertFrom-Json
 if($NsisPath -and (Get-FileHash -LiteralPath $NsisPath).Hash.ToLowerInvariant() -cne $pin.compilerSha256){throw 'Pinned NSIS compiler mismatch.'}
 $sdk=Split-Path -Parent $DotNetPath
-$env:DOTNET_ROOT=$sdk; # Standard SDK package cache.
- $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'
+$env:DOTNET_ROOT=$sdk; $env:NUGET_PACKAGES=Join-Path $sdk '_cache/nuget-packages'; $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1'
 New-Item -ItemType Directory -Path $output | Out-Null
 if ($ReusePublishedPayloadDirectory) {
     # Reuse immutable reviewed payload bytes; only the installer changes.
@@ -109,7 +108,7 @@ $version=[string]$projectXml.Project.PropertyGroup.Version
 $catalog=[ordered]@{version=$version;archiveSha256=(Get-FileHash -LiteralPath $archive).Hash;files=$catalogFiles}
 $catalogPath=Join-Path $output 'catalog.json'; [IO.File]::WriteAllText($catalogPath,($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
 $embedded=if($NsisPath){''}else{$archive}
-& $DotNetPath publish (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -c Release -r win-x64 --self-contained true "-p:PayloadCatalog=$catalogPath" '-p:EmbeddedPayload=' '-p:UninstallStub=' "-p:BaseIntermediateOutputPath=$(Join-Path $output 'uninstall-intermediate/')" "-p:BaseOutputPath=$(Join-Path $output 'uninstall-bin/')" '-p:RuntimeFrameworkVersion=8.0.29' --output (Join-Path $output 'uninstall')
+& $DotNetPath publish (Join-Path $PSScriptRoot 'installer/Soda.AssetQuickRead.Setup.csproj') -c Release -r win-x64 --self-contained true --configfile (Join-Path $PSScriptRoot 'bridge/NuGet.Config') "-p:PayloadCatalog=$catalogPath" '-p:EmbeddedPayload=' '-p:UninstallStub=' "-p:BaseIntermediateOutputPath=$(Join-Path $output 'uninstall-intermediate/')" "-p:BaseOutputPath=$(Join-Path $output 'uninstall-bin/')" '-p:RuntimeFrameworkVersion=8.0.29' --output (Join-Path $output 'uninstall')
 if($LASTEXITCODE -ne 0){throw 'Uninstaller offline publish failed.'}
 $uninstallStub=Join-Path $output 'uninstall/Soda.AssetQuickRead.Setup.exe'
 $stubResource=if($NsisPath){''}else{$uninstallStub}
@@ -128,7 +127,7 @@ if($NsisPath){
     & $NsisPath /NOCONFIG /INPUTCHARSET UTF8 /V3 "/DINNER_EXE=$inner" "/DOUTPUT_EXE=$final" "/DRUNTIME_ARCHIVE=$archive" "/DUNINSTALLER_EXE=$uninstallStub" "/DINSTALLER_VERSION=$version" (Join-Path $PSScriptRoot 'installer/compress-setup.nsi')
     if($LASTEXITCODE -ne 0){throw 'Compressed installer build failed.'}
 }else{[IO.File]::Copy($inner,$final,$false)}
-[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=6;protocolArchiveFallback=$true;protocolArchiveSize=556844;protocolArchiveSha256='39EB5B5C3D2AC9E5F207280902112FF0DE08B38966FDD49B25D7BCB92F8EB640';protocolHeaderTimeoutSeconds=30;protocolIdleTimeoutSeconds=30;protocolAttemptTimeoutSeconds=300;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
+[ordered]@{path=$final;size=(Get-Item -LiteralPath $final).Length;sha256=(Get-FileHash -LiteralPath $final).Hash;embeddedProtocolAssets=$false;bridgeVersion=$packagedBridgeVersion;installProtocolDownloads=3;maxParallelProtocolDownloads=3;protocolSourceAttempts=6;protocolArchiveFallback=$true;protocolArchiveSize=352757;protocolArchiveSha256='D02DB913829549689E52FCDE062D7711D9DD279AFCF85622EDB4CFBF6B717445';protocolHeaderTimeoutSeconds=30;protocolIdleTimeoutSeconds=30;protocolAttemptTimeoutSeconds=300;reuseVerifiedLocalProtocol=$true;captureStarted=$false;registryWritesDuringBuild=0} | ConvertTo-Json
 
 } finally {
     foreach ($name in $buildEnvironmentBefore.Keys) {

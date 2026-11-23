@@ -2,14 +2,14 @@
 param(
     [switch]$RunTests,
     [switch]$Offline,
-    [string]$RustProfile = '',
+    [string]$RustProfile = 'E:\DevTools\Rust\cargo\tauri-msvc-env.ps1',
     [string]$TargetDirectory,
     [string]$TemporaryDirectory,
     [string]$RuntimeDirectory,
     [string]$DownloadDirectory
 )
 $ErrorActionPreference = 'Stop'
-$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
+$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { 'F:\AI项目\SodaTerminal\ZZZ-derived' }
 $selectedTarget = if ($TargetDirectory) { $TargetDirectory }
     elseif ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR }
     else {
@@ -25,13 +25,13 @@ try {
     $env:TEMP = $TemporaryDirectory
     $env:TMP = $TemporaryDirectory
     & (Join-Path $PSScriptRoot 'Prepare-Upstream.ps1') -Offline:$Offline
-    if ($RustProfile) { . $RustProfile }
+    . $RustProfile
     # Reapply scratch after loading a toolchain profile that may set environment defaults.
     $env:TEMP = $TemporaryDirectory
     $env:TMP = $TemporaryDirectory
     # The toolchain profile must not replace the caller's selected artifact location.
     $env:CARGO_TARGET_DIR = $selectedTarget
-    $cargoExecutable = (Get-Command cargo -ErrorAction Stop).Source
+    $cargoExecutable = Join-Path $env:CARGO_HOME 'bin\cargo.exe'
     $cargoMode = @()
     if ($Offline) { $cargoMode = @('--offline') }
     if ($RunTests) {
@@ -49,6 +49,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('.upstream\assets\' + $file)) -Destination $protocolDirectory
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.upstream\LICENSE') -Destination (Join-Path $runtimeDirectory 'UPSTREAM-LICENSE.txt')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.upstream\LICENSE.protocol') -Destination (Join-Path $runtimeDirectory 'PROTOCOL-SOURCE-LICENSE.txt')
     $driverPin = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'driver-source.json') -Raw | ConvertFrom-Json
     $driverHashes = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'driver-files.sha256.json') -Raw | ConvertFrom-Json
     $downloadDirectory = if ($DownloadDirectory) { [IO.Path]::GetFullPath($DownloadDirectory) } else { Join-Path $derivedRoot 'asset-quick-read\downloads' }

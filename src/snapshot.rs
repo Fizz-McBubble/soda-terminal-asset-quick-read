@@ -5,7 +5,7 @@ use crate::{
 use serde::Serialize;
 
 pub const SCHEMA: &str = "soda-asset-snapshot-probe/v1";
-pub const UPSTREAM_COMMIT: &str = "4853f07c8fb5322c12b9b580d6364b577c2ac96a";
+pub const UPSTREAM_COMMIT: &str = "444d2ccf3bae448d6a205e5d35107e85d462875a";
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Assets {
@@ -135,7 +135,7 @@ pub struct Report {
     pub seed_diagnostics: Vec<SeedDiagnostics>,
     pub public_metadata: Option<crate::cn_dispatch::MetadataReceipt>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     pub field_survey: Option<crate::field_survey::FieldSurvey>,
     pub issues: Vec<DecodeIssue>,
     pub assets: Assets,
@@ -155,7 +155,7 @@ pub struct SnapshotState {
     pub counters: Counters,
     pub issues: Vec<DecodeIssue>,
     pub response_observations: Vec<ResponseObservation>,
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     pub field_survey: Option<crate::field_survey::FieldSurvey>,
 }
 
@@ -250,7 +250,7 @@ impl SnapshotState {
             response_observations: self.response_observations,
             seed_diagnostics: Vec::new(),
             public_metadata: None,
-            #[cfg(any())]
+            #[cfg(feature = "local-field-survey")]
             field_survey: self.field_survey,
             issues: self.issues,
             assets: self.assets,
@@ -265,7 +265,7 @@ impl SnapshotState {
 }
 
 impl Report {
-    #[cfg(any())]
+    #[cfg(feature = "local-field-survey")]
     pub fn redact_for_field_survey(&mut self) {
         self.schema = "soda-selected-agent-field-validation/v1";
         self.status = if self.stop_reason == "capture_failed" {

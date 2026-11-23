@@ -6,17 +6,17 @@ namespace Soda.AssetQuickRead;
 internal static class Security
 {
     internal const int BodyLimit = 4096;
-    internal static readonly string[] Origins = ["http://127.0.0.1:50565", "http://127.0.0.1:5173", "https://sodaterminal.com", "https://app.sodaterminal.workers.dev", "https://soda-terminal-production.up.railway.app"];
+    internal static readonly string[] Origins = ["http://127.0.0.1:50565", "http://127.0.0.1:5173", "https://sodaterminal.com"];
     internal static bool ValidHost(string? host) => ServiceReadiness.ServicePorts.Any(port => host == $"127.0.0.1:{port}");
     internal static bool ValidOrigin(string? origin) => origin is not null && Origins.Contains(origin, StringComparer.Ordinal);
     internal static readonly Dictionary<string, string> Pinned = new(StringComparer.Ordinal)
     {
-        ["soda-asset-capture.exe"] = "454637CE68A114C4785F1FAF8A319B926CCB4339F10F11A85CE9B8CCD0BF7DFB",
+        ["soda-asset-capture.exe"] = "8D8F05E53A2C72356D076CD36902C3CEEF1616DC65FA0BAA89D7005B4C4764F4",
         ["WinDivert.dll"] = "C1E060EE19444A259B2162F8AF0F3FE8C4428A1C6F694DCE20DE194AC8D7D9A2",
         ["WinDivert64.sys"] = "8DA085332782708D8767BCACE5327A6EC7283C17CFB85E40B03CD2323A90DDC2",
-        ["assets/manifest.json"] = "38006E92317CF8EBA3E578D58E5B0FC9AECFEC117D20DC375AA9BED2B073302E",
-        ["assets/datamine.json"] = "9702AB5EE0CB44A18D8D3BE9AE2C5934DEB4883989ADA292A3BBd44654EFB449".ToUpperInvariant(),
-        ["assets/nap.json"] = "2DFB176209CECEAB5AB53701F12FA3050AD70140004118B7A80AC32A01DF982D"
+        ["assets/manifest.json"] = "CAEBBE1A8AC8324109521B1477F67F6B10E387FC2B550486DE044027121D1CF8",
+        ["assets/datamine.json"] = "C7FAC8E4CDF0E59CAD967AA0C8A21D5DB54E746902E484DF632E65800F127F04",
+        ["assets/nap.json"] = "8FFA529920FE01265A8538BE06B821DC9B62247419C2200C837F24F4441F6DF6"
     };
     internal static string RuntimeDirectory => Path.Combine(AppContext.BaseDirectory, "runtime");
     internal static void VerifyRuntime(string root)

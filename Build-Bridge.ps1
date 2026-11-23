@@ -1,7 +1,7 @@
 [CmdletBinding()]
-param([string]$OutputDirectory, [switch]$RunTests, [string]$DotNetPath = (Get-Command dotnet -ErrorAction Stop).Source, [string]$TemporaryDirectory)
+param([string]$OutputDirectory, [switch]$RunTests, [string]$DotNetPath = 'E:\DevTools\DotNet\8.0.423\dotnet.exe', [string]$TemporaryDirectory)
 $ErrorActionPreference = 'Stop'
-$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { (Join-Path $PSScriptRoot '.cache\soda-derived') }
+$derivedRoot = if ($env:SODA_DERIVED_ROOT) { $env:SODA_DERIVED_ROOT } else { 'F:\AI项目\SodaTerminal\ZZZ-derived' }
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $derivedRoot ('asset-quick-read\bridge\build-' + [guid]::NewGuid().ToString('N'))
 }
@@ -20,16 +20,19 @@ try {
     if (-not $env:DOTNET_CLI_HOME) { $env:DOTNET_CLI_HOME = Join-Path $derivedRoot 'dotnet\cli-home' }
     $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
     $env:DOTNET_ROOT = $sdkDirectory
-    # Use the standard SDK package cache.
+    $env:NUGET_PACKAGES = Join-Path $sdkDirectory '_cache\nuget-packages'
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
     $project = Join-Path $PSScriptRoot 'bridge\Soda.AssetQuickRead.Bridge.csproj'
+    [xml]$projectXml = Get-Content -LiteralPath $project -Raw
+    $bridgeVersion = [string]$projectXml.Project.PropertyGroup.Version
+    if ($bridgeVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Bridge project version is invalid.' }
     $intermediate = Join-Path $output 'intermediate\'
     $companion = Join-Path $output 'companion'
     # The host fixture validates a versioned installation layout. Publish once
     # there, test the real apphost, then move those same bytes to the public exit.
-    $published = if ($RunTests) { Join-Path $output 'host-fixture\versions\1.0.7' } else { $companion }
-    & $DotNetPath publish $project --configuration Release --runtime win-x64 --self-contained true "-p:BaseIntermediateOutputPath=$intermediate" "-p:BaseOutputPath=$(Join-Path $output 'bin\')" "-p:RuntimeFrameworkVersion=8.0.29" --output $published
+    $published = if ($RunTests) { Join-Path $output ('host-fixture\versions\' + $bridgeVersion) } else { $companion }
+    & $DotNetPath publish $project --configuration Release --runtime win-x64 --self-contained true --configfile (Join-Path $PSScriptRoot 'bridge\NuGet.Config') "-p:BaseIntermediateOutputPath=$intermediate" "-p:BaseOutputPath=$(Join-Path $output 'bin\')" "-p:RuntimeFrameworkVersion=8.0.29" --output $published
     if ($LASTEXITCODE -ne 0) { throw 'Bridge offline publish failed.' }
     if ($RunTests) {
         $fixtureExe = Join-Path $published 'Soda.AssetQuickRead.Bridge.exe'
